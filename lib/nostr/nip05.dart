@@ -26,6 +26,13 @@ const _cacheTtl = Duration(hours: 1);
 
 final _localPartPattern = RegExp(r'^[a-z0-9-_.]+$');
 
+/// A dotted DNS name, so text such as `good.example@evil.example` can't
+/// make the fetch go to a host other than the one the identifier shows.
+final _domainPattern = RegExp(
+  r'^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$',
+  caseSensitive: false,
+);
+
 /// Splits a NIP-05 identifier into local-part and domain. A bare domain
 /// (no `@`) means the `_@domain` root identifier, per the spec.
 Nip05Identifier? parseNip05(String identifier) {
@@ -36,7 +43,9 @@ Nip05Identifier? parseNip05(String identifier) {
   final local = (atIndex == -1 ? '_' : trimmed.substring(0, atIndex))
       .toLowerCase();
   final domain = atIndex == -1 ? trimmed : trimmed.substring(atIndex + 1);
-  if (domain.isEmpty || !_localPartPattern.hasMatch(local)) return null;
+  if (!_domainPattern.hasMatch(domain) || !_localPartPattern.hasMatch(local)) {
+    return null;
+  }
 
   return (local: local, domain: domain);
 }
@@ -102,8 +111,8 @@ class _CacheEntry {
 final _cache = <String, _CacheEntry>{};
 
 /// Checks that [identifier] maps to [pubkeyHex] via its domain's
-/// `.well-known/nostr.json`. Results are cached per (pubkey, identifier) pair
-/// for an hour.
+/// `.well-known/nostr.json`. Answers are cached per (pubkey, identifier) pair
+/// for an hour; failures to get one are not.
 Future<Nip05Status> verifyNip05({
   required String identifier,
   required String pubkeyHex,
@@ -123,6 +132,9 @@ Future<Nip05Status> verifyNip05({
     parsed,
     pubkeyHex,
   ).timeout(_fetchTimeout, onTimeout: () => Nip05Status.unreachable);
-  _cache[cacheKey] = _CacheEntry(status, DateTime.now());
+  // A failure may be passing (offline, a server hiccup), so it is not kept.
+  if (status != Nip05Status.unreachable) {
+    _cache[cacheKey] = _CacheEntry(status, DateTime.now());
+  }
   return status;
 }

@@ -1,4 +1,7 @@
+import 'dart:async';
 import 'dart:io';
+
+import 'package:flutter/foundation.dart';
 
 /// Whether the first [bits] bits of [bytes] match [prefix], which may be
 /// shorter than [bytes].
@@ -64,33 +67,127 @@ bool isBlockedAddress(InternetAddress address) {
 int effectivePort(Uri url) =>
     url.port != 0 ? url.port : (url.scheme == 'https' ? 443 : 80);
 
-/// Connects to the address it vetted, so DNS can't rebind after the check.
+/// Resolves a host name; replaceable so tests can pick the addresses.
+@visibleForTesting
+Future<List<InternetAddress>> Function(String host) lookupHost =
+    InternetAddress.lookup;
+
+/// How long an address gets before the next one is tried alongside it, as in
+/// Happy Eyeballs (RFC 8305), so one dead address family costs little.
+const connectAttemptDelay = Duration(milliseconds: 250);
+
+/// [addresses] with IPv6 and IPv4 alternating, keeping the resolver's order.
+List<InternetAddress> _interleaved(List<InternetAddress> addresses) {
+  final firstType = addresses.first.type;
+  final first = [
+    for (final a in addresses)
+      if (a.type == firstType) a,
+  ];
+  final second = [
+    for (final a in addresses)
+      if (a.type != firstType) a,
+  ];
+  return [
+    for (var i = 0; i < first.length || i < second.length; i++) ...[
+      if (i < first.length) first[i],
+      if (i < second.length) second[i],
+    ],
+  ];
+}
+
+/// Connects to whichever of [_addresses] answers first.
+class _ConnectRace {
+  _ConnectRace(this._addresses, this._port);
+
+  final List<InternetAddress> _addresses;
+  final int _port;
+  final _tasks = <ConnectionTask<Socket>>[];
+  final _result = Completer<Socket>();
+  Socket? _winner;
+  Timer? _nextAttempt;
+  var _started = 0;
+  var _failed = 0;
+
+  Future<Socket> start() {
+    _startNext();
+    return _result.future;
+  }
+
+  void _startNext() {
+    _nextAttempt?.cancel();
+    if (_result.isCompleted || _started == _addresses.length) return;
+    final address = _addresses[_started++];
+    _nextAttempt = Timer(connectAttemptDelay, _startNext);
+    Socket.startConnect(address, _port).then((task) {
+      _tasks.add(task);
+      task.socket.then((socket) => _won(task, socket), onError: _lost);
+      if (_result.isCompleted) task.cancel();
+    }, onError: _lost);
+  }
+
+  void _won(ConnectionTask<Socket> task, Socket socket) {
+    if (_result.isCompleted) {
+      socket.destroy();
+      return;
+    }
+    _nextAttempt?.cancel();
+    _winner = socket;
+    _result.complete(socket);
+    for (final other in _tasks) {
+      if (!identical(other, task)) other.cancel();
+    }
+  }
+
+  void _lost(Object error, StackTrace stack) {
+    _failed++;
+    if (_result.isCompleted) return;
+    if (_failed == _addresses.length) {
+      _nextAttempt?.cancel();
+      _result.completeError(error, stack);
+    } else if (_failed == _started) {
+      _startNext(); // Every attempt so far failed; don't wait for the timer.
+    }
+  }
+
+  void cancel() {
+    _nextAttempt?.cancel();
+    for (final task in _tasks) {
+      task.cancel();
+    }
+    _winner?.destroy();
+    if (!_result.isCompleted) {
+      _result.completeError(const SocketException('Connection cancelled'));
+    }
+  }
+}
+
+/// Connects only to addresses it vetted, so DNS can't rebind after the check.
 ///
-/// Ignores [proxyHost] and [proxyPort].
+/// Tries each vetted address in turn (see [connectAttemptDelay]), and returns
+/// before connecting, so [HttpClient.connectionTimeout] bounds the TCP and
+/// TLS handshakes. Ignores [proxyHost] and [proxyPort].
 Future<ConnectionTask<Socket>> guardedConnectionFactory(
   Uri url,
   String? proxyHost,
   int? proxyPort,
 ) async {
-  final addresses = await InternetAddress.lookup(url.host);
-  InternetAddress? address;
-  for (final candidate in addresses) {
-    if (!isBlockedAddress(candidate)) {
-      address = candidate;
-      break;
-    }
-  }
-  if (address == null) {
+  final addresses = [
+    for (final candidate in await lookupHost(url.host))
+      if (!isBlockedAddress(candidate)) candidate,
+  ];
+  if (addresses.isEmpty) {
     throw SocketException('No public address found for ${url.host}');
   }
 
-  final rawTask = await Socket.startConnect(address, effectivePort(url));
-  if (url.scheme != 'https') return rawTask;
-
-  // connectionFactory doesn't wrap HTTPS in TLS itself.
-  final rawSocket = await rawTask.socket;
-  final secureSocket = SecureSocket.secure(rawSocket, host: url.host);
-  return ConnectionTask.fromSocket(secureSocket, rawTask.cancel);
+  final race = _ConnectRace(_interleaved(addresses), effectivePort(url));
+  final socket = race.start();
+  return ConnectionTask.fromSocket(
+    // connectionFactory doesn't wrap HTTPS in TLS itself.
+    url.scheme == 'https'
+        ? socket.then((raw) => SecureSocket.secure(raw, host: url.host))
+        : socket,
+    race.cancel,
+  );
 }
 
 /// Guards every HttpClient, including NetworkImage, which has no other seam.

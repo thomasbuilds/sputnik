@@ -1,7 +1,40 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sputnik/services/ssrf_guard.dart';
+
+/// Sends connects for [dead] addresses nowhere, and every other one to a
+/// local server on [port]; records the addresses tried.
+final class _FakeNetwork extends IOOverrides {
+  _FakeNetwork(this.port, {this.dead = const {}});
+
+  final int port;
+  final Set<String> dead;
+  final attempts = <String>[];
+
+  @override
+  Future<ConnectionTask<Socket>> socketStartConnect(
+    dynamic host,
+    int port, {
+    dynamic sourceAddress,
+    int sourcePort = 0,
+  }) {
+    final address = (host as InternetAddress).address;
+    attempts.add(address);
+    if (dead.contains(address)) {
+      final never = Completer<Socket>();
+      return Future.value(
+        ConnectionTask.fromSocket(never.future, () {
+          if (!never.isCompleted) {
+            never.completeError(const SocketException('Cancelled'));
+          }
+        }),
+      );
+    }
+    return super.socketStartConnect(InternetAddress.loopbackIPv4, this.port);
+  }
+}
 
 void main() {
   group('effectivePort', () {
@@ -154,6 +187,69 @@ void main() {
         );
       }
       expect(served, 0);
+    });
+
+    group('with several addresses', () {
+      late HttpServer server;
+      setUp(() async {
+        server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        server.listen((request) {
+          request.response
+            ..write('ok')
+            ..close();
+        });
+      });
+      tearDown(() async {
+        lookupHost = InternetAddress.lookup;
+        await server.close(force: true);
+      });
+
+      Future<String> get(Uri url, _FakeNetwork network) {
+        return IOOverrides.runWithIOOverrides(() async {
+          final client = HttpClient()
+            ..connectionFactory = guardedConnectionFactory
+            ..connectionTimeout = const Duration(seconds: 1);
+          try {
+            final response = await (await client.getUrl(url)).close();
+            return await response
+                .transform(const SystemEncoding().decoder)
+                .join();
+          } finally {
+            client.close(force: true);
+          }
+        }, network);
+      }
+
+      test(
+        'falls back to the next vetted address, never a blocked one',
+        () async {
+          lookupHost = (_) async => [
+            InternetAddress('2606:4700::1'),
+            InternetAddress('127.0.0.1'),
+            InternetAddress('8.8.8.8'),
+          ];
+          final network = _FakeNetwork(server.port, dead: {'2606:4700::1'});
+
+          expect(await get(Uri.parse('http://relay.example/'), network), 'ok');
+          expect(network.attempts, ['2606:4700::1', '8.8.8.8']);
+        },
+      );
+
+      test(
+        'connectionTimeout bounds an HTTPS connect that never answers',
+        () async {
+          lookupHost = (_) async => [InternetAddress('2606:4700::1')];
+          final network = _FakeNetwork(server.port, dead: {'2606:4700::1'});
+
+          await expectLater(
+            get(
+              Uri.parse('https://relay.example/'),
+              network,
+            ).timeout(const Duration(seconds: 5)),
+            throwsA(isA<SocketException>()),
+          );
+        },
+      );
     });
   });
 }

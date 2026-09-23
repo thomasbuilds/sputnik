@@ -335,6 +335,18 @@ class MediaSource {
   }
 }
 
+/// Larger images are refused: except for JPEG, the whole image is decoded
+/// before [ResizeImage] scales it down, so a small file (a 250 KB PNG can be
+/// 8000x8000) could otherwise claim gigabytes of memory.
+const maxDecodedPixels = 50 * 1000 * 1000;
+
+/// JPEG is decoded at a reduced scale when a smaller size is asked for.
+bool _isJpeg(Uint8List bytes) =>
+    bytes.length > 2 &&
+    bytes[0] == 0xff &&
+    bytes[1] == 0xd8 &&
+    bytes[2] == 0xff;
+
 /// A network image fetched through the SSRF guard, with a size cap.
 class BoundedNetworkImage extends ImageProvider<BoundedNetworkImage> {
   const BoundedNetworkImage(
@@ -372,7 +384,16 @@ class BoundedNetworkImage extends ImageProvider<BoundedNetworkImage> {
         clientFactory: clientFactory,
       ),
     );
-    return decode(await ui.ImmutableBuffer.fromUint8List(bytes));
+    final buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
+    // Only the header is read here; the pixels are decoded by [decode].
+    final descriptor = await ui.ImageDescriptor.encoded(buffer);
+    final pixels = descriptor.width * descriptor.height;
+    descriptor.dispose();
+    if (pixels > maxDecodedPixels && !_isJpeg(bytes)) {
+      buffer.dispose();
+      throw HttpException('Image too large to decode ($pixels pixels)');
+    }
+    return decode(buffer);
   }
 
   @override

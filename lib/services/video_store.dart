@@ -1,5 +1,7 @@
+import 'dart:ffi';
 import 'dart:io';
 
+import 'package:ffi/ffi.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -18,6 +20,23 @@ Future<void> _deleteQuietly(FileSystemEntity entity) async {
     await entity.delete(recursive: true);
   } on FileSystemException {
     // Already gone, or still in use.
+  }
+}
+
+final _chmod = DynamicLibrary.process()
+    .lookupFunction<
+      Int32 Function(Pointer<Utf8>, Uint32),
+      int Function(Pointer<Utf8>, int)
+    >('chmod');
+
+void _restrictToOwner(Directory directory) {
+  final path = directory.path.toNativeUtf8();
+  try {
+    if (_chmod(path, 448 /* 0700 */) != 0) {
+      throw FileSystemException('Could not make it private', directory.path);
+    }
+  } finally {
+    malloc.free(path);
   }
 }
 
@@ -54,10 +73,12 @@ class VideoStore {
     }
   }
 
-  /// Created with mode 0700, so other users can't read what is played.
+  /// Set to mode 0700, so other users can't read what is played: on Linux
+  /// the temp folder is the shared /tmp, and createTemp follows the umask.
   Future<Directory> _sessionDirectory() {
     return _session ??= () async {
       final directory = await (await _tempDirectory()).createTemp(_dirPrefix);
+      if (Platform.isLinux || Platform.isMacOS) _restrictToOwner(directory);
       _ownPath = directory.path;
       return directory;
     }();

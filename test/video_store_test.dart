@@ -51,6 +51,16 @@ void main() {
       ...dir.listSync().whereType<File>(),
   ];
 
+  test('keeps videos in a folder only its owner can open', () async {
+    serve((_) => [1, 2, 3]);
+
+    final file = await store.fetch(
+      MediaSource(url: base.resolve('/v.mp4').toString()),
+    );
+
+    expect(file.parent.statSync().mode & 0x1ff, 0x1c0); // 0700
+  }, skip: !Platform.isLinux && !Platform.isMacOS);
+
   test('downloads a video to a file with the same bytes', () async {
     final video = List.generate(1000, (i) => i % 251);
     serve((_) => video);

@@ -171,7 +171,12 @@ class RelayConnectionPool {
     Duration connectTimeout,
   ) async {
     final existing = _connections[relayUrl];
-    if (existing != null && !existing.isClosed) return existing;
+    if (existing != null && !existing.isClosed) {
+      // A caller joining a connection that is still opening needs its own
+      // bound: the opener's timeout only releases the opener.
+      await existing.ready.timeout(connectTimeout);
+      return existing;
+    }
 
     final connection = _RelayConnection(relayUrl);
     _connections[relayUrl] = connection;
@@ -186,7 +191,9 @@ class RelayConnectionPool {
 
   Future<void> _drop(String relayUrl, _RelayConnection connection) async {
     removeIfCurrent(_connections, relayUrl, connection);
-    await connection.close();
+    // Not awaited: closing a socket whose connect is still pending only
+    // completes once that connect does, which may be never.
+    connection.close().ignore();
   }
 
   /// Publishes [event] to every relay in parallel, keyed by relay URL.
@@ -240,16 +247,26 @@ class _RelayConnection {
 
   Future<void> _dispatchQueue = Future.value();
 
+  /// Frames received but not yet parsed and dispatched. While any are left,
+  /// the relay has answered and only the shared parser is behind.
+  int _framesQueued = 0;
+
   bool get isClosed => _closed;
 
   void _handleMessage(dynamic raw) {
     if (raw is! String) return;
 
+    _framesQueued++;
     final dispatched = _dispatchQueue.then((_) async {
-      final parsed = await RelayMessageParser.instance.parse(
-        raw,
-        subscriptionIds: _handlers.keys.toSet(),
-      );
+      final ParsedRelayMessage? parsed;
+      try {
+        parsed = await RelayMessageParser.instance.parse(
+          raw,
+          subscriptionIds: _handlers.keys.toSet(),
+        );
+      } finally {
+        _framesQueued--;
+      }
       if (parsed == null) return;
       if (parsed.type == 'OK') {
         _publishWaiters.resolve(
@@ -303,7 +320,13 @@ class _RelayConnection {
           ? timeout
           : (timeout < _firstResponseTimeout ? timeout : _firstResponseTimeout);
       idleTimer = Timer(duration, () {
-        if (!completer.isCompleted) completer.complete();
+        // Not idle: the relay has sent frames, maybe ours, that are still
+        // waiting for the shared parser. The overall timer bounds this.
+        if (_framesQueued > 0) {
+          resetIdleTimer();
+        } else if (!completer.isCompleted) {
+          completer.complete();
+        }
       });
     }
 
@@ -314,7 +337,7 @@ class _RelayConnection {
         case 'EVENT':
           final event = message.event;
           if (event == null || !matcher.matches(event)) break;
-          if (events.length >= keep || !seenIds.add(event.id)) break;
+          if (!seenIds.add(event.id)) break;
           events.add(event);
           if (events.length >= _maxEventsPerSubscription &&
               !completer.isCompleted) {
@@ -352,6 +375,13 @@ class _RelayConnection {
       _channel.sink.add(jsonEncode(['CLOSE', subscriptionId]));
     }
 
+    // A relay overshooting the limit may send older events first, so keep
+    // the newest rather than the first to arrive.
+    if (events.length > keep) {
+      events
+        ..sort(compareNewestFirst)
+        ..removeRange(keep, events.length);
+    }
     return (events: events, eose: eose);
   }
 

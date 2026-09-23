@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -23,6 +24,35 @@ String _eventMsg(String subId, NostrEvent event) =>
     jsonEncode(['EVENT', subId, event.toJson()]);
 
 String _eose(String subId) => jsonEncode(['EOSE', subId]);
+
+/// Makes every TCP connect hang, then fail after [failAfter], like a host
+/// that drops SYNs until the kernel gives up.
+final class _SlowToFail extends IOOverrides {
+  _SlowToFail(this.failAfter);
+
+  final Duration failAfter;
+
+  @override
+  Future<ConnectionTask<Socket>> socketStartConnect(
+    dynamic host,
+    int port, {
+    dynamic sourceAddress,
+    int sourcePort = 0,
+  }) {
+    final socket = Completer<Socket>();
+    final timer = Timer(failAfter, () {
+      socket.completeError(const SocketException('Connection timed out'));
+    });
+    return Future.value(
+      ConnectionTask.fromSocket(socket.future, () {
+        timer.cancel();
+        if (!socket.isCompleted) {
+          socket.completeError(const SocketException('Cancelled'));
+        }
+      }),
+    );
+  }
+}
 
 void main() {
   const client = RelayClient(timeout: Duration(seconds: 2));
@@ -151,6 +181,32 @@ void main() {
       expect(result.allRelaysAnswered, isTrue);
     });
 
+    test('a relay overshooting the limit oldest-first still yields the '
+        'newest', () async {
+      final now = DateTime.now();
+      final old = sign(
+        kind: 3,
+        content: '',
+        at: now.subtract(const Duration(days: 30)),
+      );
+      final fresh = sign(
+        kind: 3,
+        content: '',
+        at: now.subtract(const Duration(minutes: 1)),
+      );
+      final server = await _serve(
+        (sub) => [_eventMsg(sub, old), _eventMsg(sub, fresh), _eose(sub)],
+      );
+      addTearDown(() => server.close(force: true));
+
+      final result = await query(
+        server,
+        NostrFilter(kinds: const [3], authors: [key.publicKeyHex], limit: 1),
+      );
+
+      expect(result.events.map((e) => e.id), [fresh.id]);
+    });
+
     test('an event for another subscription is ignored', () async {
       final stray = sign(content: 'stray');
       final mine = sign(content: 'mine');
@@ -185,6 +241,64 @@ void main() {
     });
   });
 
+  test('a relay that fails to connect only after the timeout', () async {
+    final watch = Stopwatch()..start();
+    final result = await IOOverrides.runWithIOOverrides(
+      () => const RelayClient(timeout: Duration(seconds: 1)).queryWithStatus({
+        'ws://unreachable.example',
+      }, const NostrFilter(kinds: [1])),
+      _SlowToFail(const Duration(seconds: 3)),
+    ).timeout(const Duration(seconds: 10));
+
+    expect(result.answeredRelays, 0);
+    expect(watch.elapsed, lessThan(const Duration(seconds: 2)));
+  });
+
+  group('a relay whose answers wait behind others on its connection', () {
+    // Frames are parsed one at a time per connection, so a burst of heavy
+    // events for one query delays the next query's answer on that relay.
+    test('is not given up on before its queued answer is parsed', () async {
+      final heavy = sign(content: 'x' * 60000);
+      final light = sign(kind: 0, content: '{}');
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      server.listen((request) async {
+        final socket = await WebSocketTransformer.upgrade(request);
+        socket.listen((message) {
+          final decoded = jsonDecode(message as String) as List<dynamic>;
+          if (decoded.first != 'REQ') return;
+          final sub = decoded[1] as String;
+          final kinds = (decoded[2] as Map<String, dynamic>)['kinds'] as List;
+          if (kinds.contains(1)) {
+            for (var i = 0; i < 400; i++) {
+              socket.add(_eventMsg(sub, heavy));
+            }
+          } else {
+            socket.add(_eventMsg(sub, light));
+          }
+          socket.add(_eose(sub));
+        });
+      });
+      final relay = {'ws://127.0.0.1:${server.port}'};
+
+      final burst = client.queryWithStatus(
+        relay,
+        const NostrFilter(kinds: [1]),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      // Answered at once, but only parsed once the burst ahead of it is.
+      const impatient = RelayClient(timeout: Duration(milliseconds: 100));
+      final answer = await impatient.queryWithStatus(
+        relay,
+        const NostrFilter(kinds: [0]),
+      );
+      await burst;
+
+      expect(answer.events.map((e) => e.id), [light.id]);
+      expect(answer.allRelaysAnswered, isTrue);
+    });
+  });
+
   group('removeIfCurrent', () {
     test('removes the connection it was given', () {
       final connection = Object();
@@ -214,5 +328,32 @@ void main() {
         isFalse,
       );
     });
+  });
+
+  test('a query joining a connection that never finishes opening gives up '
+      'after its own timeout', () async {
+    // Accepts TCP but never answers the WebSocket upgrade.
+    final hole = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    final sockets = <Socket>[];
+    hole.listen((socket) {
+      sockets.add(socket);
+      socket.listen((_) {});
+    });
+    addTearDown(() async {
+      for (final socket in sockets) {
+        socket.destroy();
+      }
+      await hole.close();
+    });
+    final url = 'ws://127.0.0.1:${hole.port}';
+
+    // The first query opens the connection; the second joins it.
+    client.queryWithStatus({url}, const NostrFilter(kinds: [1])).ignore();
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    final joined = await client
+        .queryWithStatus({url}, const NostrFilter(kinds: [0]))
+        .timeout(const Duration(seconds: 8));
+
+    expect(joined.answeredRelays, 0);
   });
 }

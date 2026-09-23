@@ -19,6 +19,51 @@ final _onePixelPng = base64Decode(
   '60e6kgAAAABJRU5ErkJggg==',
 );
 
+/// A valid all-black grayscale PNG: tiny on the wire, [side]² pixels decoded.
+Uint8List _hugePng(int side) {
+  List<int> chunk(String type, List<int> data) {
+    final typed = [...ascii.encode(type), ...data];
+    final length = ByteData(4)..setUint32(0, data.length);
+    final crc = ByteData(4)..setUint32(0, _crc32(typed));
+    return [
+      ...length.buffer.asUint8List(),
+      ...typed,
+      ...crc.buffer.asUint8List(),
+    ];
+  }
+
+  final header = ByteData(13)
+    ..setUint32(0, side)
+    ..setUint32(4, side)
+    ..setUint8(8, 8); // 8-bit grayscale, the rest zero
+  final compressed = BytesBuilder();
+  final sink = ZLibEncoder().startChunkedConversion(
+    ByteConversionSink.withCallback(compressed.add),
+  );
+  final row = Uint8List(side + 1); // filter byte, then black pixels
+  for (var y = 0; y < side; y++) {
+    sink.add(row);
+  }
+  sink.close();
+  return Uint8List.fromList([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, //
+    ...chunk('IHDR', header.buffer.asUint8List()),
+    ...chunk('IDAT', compressed.takeBytes()),
+    ...chunk('IEND', const []),
+  ]);
+}
+
+int _crc32(List<int> bytes) {
+  var crc = 0xffffffff;
+  for (final byte in bytes) {
+    crc ^= byte;
+    for (var k = 0; k < 8; k++) {
+      crc = (crc & 1) != 0 ? (crc >> 1) ^ 0xedb88320 : crc >> 1;
+    }
+  }
+  return crc ^ 0xffffffff;
+}
+
 void main() {
   late HttpServer server;
   late Uri base;
@@ -743,6 +788,40 @@ void main() {
             );
 
         final error = await failed.future.timeout(const Duration(seconds: 5));
+        expect(error, isA<HttpException>());
+      });
+    });
+
+    testWidgets('refuses to decode more pixels than the cap', (tester) async {
+      await tester.runAsync(() async {
+        final png = _hugePng(7200); // about 51.8 million pixels
+        expect(png.length, lessThan(100 * 1024));
+        serve((request) {
+          request.response
+            ..add(png)
+            ..close();
+        });
+
+        final provider = ResizeImage(
+          BoundedNetworkImage(
+            MediaSource(url: base.resolve('/huge.png').toString()),
+            clientFactory: _realClient,
+          ),
+          width: 80,
+          height: 80,
+          policy: ResizeImagePolicy.fit,
+        );
+        final failed = Completer<Object>();
+        provider
+            .resolve(ImageConfiguration.empty)
+            .addListener(
+              ImageStreamListener(
+                (info, _) => failed.completeError(StateError('decoded')),
+                onError: (error, _) => failed.complete(error),
+              ),
+            );
+
+        final error = await failed.future.timeout(const Duration(seconds: 20));
         expect(error, isA<HttpException>());
       });
     });

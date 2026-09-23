@@ -39,13 +39,9 @@ class Nip05Badge extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Flexible(
-          child: Text(
-            _displayIdentifier,
-            overflow: TextOverflow.ellipsis,
-            style: theme.metadata,
-          ),
-        ),
+        // Wraps rather than ellipsizes: cutting the end would hide the domain
+        // that actually vouched for it (e.g. "jack@cash.app.long...").
+        Flexible(child: Text(_displayIdentifier, style: theme.metadata)),
         const SizedBox(width: 4),
         Tooltip(
           message: tooltip,
