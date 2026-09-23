@@ -3,7 +3,7 @@
 - [x] Add more good default relay options
 - [x] Allow clicking on URLs
 - [x] Show followers/following lists on profiles
-- [x] Show actual reaction data for posts (read-only - see below)
+- [x] Show actual reaction data for posts
 - [x] Allow searching for `nprofile` keys (rather than just `npub`)
 - [x] Allow searching for post IDs
 - [x] Show full profile pictures/banners when clicked

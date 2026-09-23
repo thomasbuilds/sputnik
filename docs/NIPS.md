@@ -12,7 +12,8 @@ A list of Nostr NIPs, detailing which ones we plan to implement (or not).
 | `18` | Reposts                                              | Implemented (repost only, quotes read-only) |
 | `19` | bech32-encoded entities                              | Partial (no `naddr`)                        |
 | `21` | `nostr:` URI scheme                                  | Partial (no `naddr`)                        |
-| `25` | Reactions                                            | Implemented (read + write)                  |
+| `24` | Extra metadata fields and tags                       | Partial (`display_name`/`banner`/`website`) |
+| `25` | Reactions                                            | Implemented (likes only, read + write)      |
 | `27` | Text Note References                                 | Implemented (read only)                     |
 | `65` | Relay List Metadata                                  | Partial (no outbox routing)                 |
 | `92` | Media Attachments Metadata (`imeta`)                 | Partial (read only)                         |
@@ -37,5 +38,5 @@ A list of Nostr NIPs, detailing which ones we plan to implement (or not).
 - "Data Vending Machines"
 - Classified listings
 - Short-form video content
-- Anything related to the Lightning Network
+- Anything related to the Lightning Network (other than payment targets)
 - Legacy DMs
