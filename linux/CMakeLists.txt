@@ -75,6 +75,10 @@ add_subdirectory("${CMAKE_SOURCE_DIR}/../src/secp256k1" secp256k1)
 add_library(nostr_secp256k1 SHARED "${CMAKE_SOURCE_DIR}/../src/nostr_secp256k1.c")
 target_link_libraries(nostr_secp256k1 PRIVATE secp256k1)
 target_compile_options(nostr_secp256k1 PRIVATE -Wall -Wextra -Werror)
+# Keep the statically linked libsecp256k1 API out of the dynamic symbol table:
+# only the nostr_* entry points are exported, and the shim's calls into
+# libsecp256k1 bind at link time, so no other library can interpose them.
+target_link_options(nostr_secp256k1 PRIVATE "LINKER:--exclude-libs,ALL")
 
 # Application build; see runner/CMakeLists.txt.
 add_subdirectory("runner")

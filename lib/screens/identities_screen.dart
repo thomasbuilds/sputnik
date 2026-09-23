@@ -17,23 +17,54 @@ const nsecClipboardClearDelay = Duration(seconds: 30);
 /// still holds the value we copied. If the user copied something else in
 /// the meantime, that is left alone.
 void _scheduleClipboardClear(String copiedValue) {
-  Future.delayed(nsecClipboardClearDelay, () async {
-    try {
-      final current = await Clipboard.getData(Clipboard.kTextPlain);
-      if (current?.text == copiedValue) {
-        await Clipboard.setData(const ClipboardData(text: ''));
-      }
-    } catch (_) {
-      // Best-effort: if the clipboard can't be read or cleared, leave it.
+  Future.delayed(
+    nsecClipboardClearDelay,
+    () => _clearClipboardIfUnchanged(copiedValue),
+  );
+}
+
+Future<void> _clearClipboardIfUnchanged(String copiedValue) async {
+  try {
+    final current = await Clipboard.getData(Clipboard.kTextPlain);
+    final state = WidgetsBinding.instance.lifecycleState;
+    if (current == null &&
+        state != null &&
+        state != AppLifecycleState.resumed) {
+      // Android 10+ hides the clipboard from apps in the background, which
+      // is exactly when the user is pasting the key elsewhere: check again
+      // once the app is back in front.
+      late final AppLifecycleListener listener;
+      listener = AppLifecycleListener(
+        onResume: () {
+          listener.dispose();
+          _clearClipboardIfUnchanged(copiedValue);
+        },
+      );
+      return;
     }
-  });
+    if (current?.text == copiedValue) {
+      await Clipboard.setData(const ClipboardData(text: ''));
+    }
+  } catch (_) {
+    // Best-effort: if the clipboard can't be read or cleared, leave it.
+  }
 }
 
 Future<void> _addIdentity(String pubkeyHex, String privkeyHex) async {
+  // Start from the stored index, not the in-memory list: if loading it
+  // failed at startup (e.g. a locked keyring), nothing saves the list, and a
+  // new key would be stored without ever being listed.
+  final stored = await SettingsStore.loadIdentities();
   // Save the secret first so an identity is never listed without one.
   await SettingsStore.savePrivateKey(pubkeyHex, privkeyHex);
   final identity = Identity(pubkeyHex: pubkeyHex, createdAt: DateTime.now());
-  identitiesNotifier.value = [...identitiesNotifier.value, identity];
+  final updated = [
+    for (final existing in stored)
+      if (existing.pubkeyHex != pubkeyHex) existing,
+    identity,
+  ];
+  await SettingsStore.saveIdentities(updated);
+  identitiesNotifier.value = updated;
   activeIdentityPubkeyNotifier.value = identity.pubkeyHex;
 }
 
@@ -77,6 +108,9 @@ class _ImportIdentityDialogState extends State<_ImportIdentityDialog> {
           controller: _controller,
           autofocus: true,
           obscureText: true,
+          autocorrect: false,
+          enableSuggestions: false,
+          enableIMEPersonalizedLearning: false,
           decoration: const InputDecoration(
             labelText: 'nsec',
             hintText: 'nsec1...',
@@ -170,6 +204,19 @@ Future<void> _confirmDeleteIdentity(
   );
   if (confirmed != true) return;
 
+  // Delete the secret first: if that fails, the identity stays listed, so
+  // the key is not left on the device with nothing pointing at it.
+  try {
+    await SettingsStore.deletePrivateKey(identity.pubkeyHex);
+  } catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not delete the private key: $e')),
+      );
+    }
+    return;
+  }
+
   final remaining = identitiesNotifier.value
       .where((i) => i.pubkeyHex != identity.pubkeyHex)
       .toList();
@@ -179,7 +226,6 @@ Future<void> _confirmDeleteIdentity(
         ? null
         : remaining.first.pubkeyHex;
   }
-  await SettingsStore.deletePrivateKey(identity.pubkeyHex);
 }
 
 Future<void> _showNsec(BuildContext context, Identity identity) async {
@@ -223,7 +269,10 @@ Future<void> _showNsec(BuildContext context, Identity identity) async {
     context: context,
     builder: (context) => AlertDialog(
       title: const Text('Private key'),
-      content: SelectableText(nsec),
+      // Not selectable: the selection toolbar's own Copy would skip the
+      // clipboard clearing below, and its text actions (e.g. Translate)
+      // would hand the key to other apps.
+      content: Text(nsec),
       actions: [
         TextButton(
           onPressed: () async {

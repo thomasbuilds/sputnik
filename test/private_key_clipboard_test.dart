@@ -12,11 +12,13 @@ void main() {
   late List<String> copied;
   late bool failCopy;
   late String? clipboardText;
+  late bool backgrounded;
 
   setUp(() {
     copied = [];
     failCopy = false;
     clipboardText = null;
+    backgrounded = false;
     notesNotifier.value = const [];
     identitiesNotifier.value = const [];
     activeIdentityPubkeyNotifier.value = null;
@@ -34,7 +36,8 @@ void main() {
             return null;
           }
           if (call.method == 'Clipboard.getData') {
-            return {'text': clipboardText};
+            // Android 10+ gives apps in the background no clipboard at all.
+            return backgrounded ? null : {'text': clipboardText};
           }
           return null;
         });
@@ -125,5 +128,65 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(clipboardText, 'something else the user copied');
+  });
+
+  Future<void> setLifecycle(WidgetTester tester, AppLifecycleState state) =>
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .handlePlatformMessage(
+            'flutter/lifecycle',
+            const StringCodec().encodeMessage(state.toString()),
+            (_) {},
+          );
+
+  testWidgets('a clear that falls due in the background happens on resume', (
+    tester,
+  ) async {
+    await revealPrivateKey(tester);
+    await tester.tap(find.text('Copy'));
+    await tester.pumpAndSettle();
+
+    await setLifecycle(tester, AppLifecycleState.paused);
+    backgrounded = true;
+    await tester.pump(nsecClipboardClearDelay);
+    await tester.pumpAndSettle();
+    expect(clipboardText, startsWith('nsec1'));
+
+    backgrounded = false;
+    await setLifecycle(tester, AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+    expect(clipboardText, isEmpty);
+  });
+
+  testWidgets('the revealed key is not selectable text', (tester) async {
+    await revealPrivateKey(tester);
+
+    // A selection toolbar would offer an uncleared Copy and text actions
+    // (e.g. Translate) that hand the key to other apps.
+    expect(find.byType(SelectableText), findsNothing);
+    expect(find.textContaining('nsec1'), findsOneWidget);
+  });
+
+  testWidgets('the nsec field opts out of IME learning and suggestions', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const MainApp());
+    await tester.tap(find.byKey(const Key('profileAvatarButton')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('settingsCard')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('identitiesCard')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('importIdentityButton')));
+    await tester.pumpAndSettle();
+    await tester.showKeyboard(find.byType(TextFormField));
+
+    final setClient = tester.testTextInput.log.lastWhere(
+      (call) => call.method == 'TextInput.setClient',
+    );
+    final config = (setClient.arguments as List)[1] as Map;
+    expect(config['obscureText'], isTrue);
+    expect(config['autocorrect'], isFalse);
+    expect(config['enableSuggestions'], isFalse);
+    expect(config['enableIMEPersonalizedLearning'], isFalse);
   });
 }

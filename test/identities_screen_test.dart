@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -5,6 +7,24 @@ import 'package:sputnik/main.dart';
 import 'package:sputnik/services/settings_store.dart';
 
 import 'support/fake_secret_store.dart';
+
+// A secure store that can refuse reads or deletes, like a locked keyring.
+class _FlakySecretStore extends FakeSecretStore {
+  bool failReads = false;
+  bool failDeletes = false;
+
+  @override
+  Future<String?> read(String key) {
+    if (failReads) throw StateError('KeyringLocked');
+    return super.read(key);
+  }
+
+  @override
+  Future<void> delete(String key) {
+    if (failDeletes) throw StateError('KeyringLocked');
+    return super.delete(key);
+  }
+}
 
 void main() {
   setUp(() {
@@ -133,5 +153,67 @@ void main() {
 
     expect(find.text('This identity is already imported'), findsOneWidget);
     expect(identitiesNotifier.value, hasLength(1));
+  });
+
+  testWidgets('a failed private key delete keeps the identity and says so', (
+    tester,
+  ) async {
+    final store = _FlakySecretStore();
+    SettingsStore.secretStore = store;
+    await openIdentitiesScreen(tester);
+    await tester.tap(find.byKey(const Key('generateIdentityButton')));
+    await tester.pumpAndSettle();
+    final pubkeyHex = identitiesNotifier.value.single.pubkeyHex;
+
+    store.failDeletes = true;
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete'));
+    await tester.pumpAndSettle();
+
+    expect(identitiesNotifier.value.single.pubkeyHex, pubkeyHex);
+    expect(find.textContaining('Could not delete the private key'), findsOne);
+    expect(await SettingsStore.loadPrivateKey(pubkeyHex), isNotNull);
+  });
+
+  testWidgets('an identity added after a failed startup load is still saved', (
+    tester,
+  ) async {
+    final store = _FlakySecretStore();
+    SettingsStore.secretStore = store;
+    const earlier =
+        'f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9';
+    await store.write(
+      'identities',
+      jsonEncode([
+        {'pubkeyHex': earlier, 'createdAt': 0},
+      ]),
+    );
+
+    // As in main(): the index can't be read (a locked keyring), so the list
+    // stays empty and nothing is bound to save it.
+    store.failReads = true;
+    final previous = FlutterError.onError;
+    FlutterError.onError = (_) {};
+    await bindPersisted(
+      identitiesNotifier,
+      SettingsStore.loadIdentities,
+      SettingsStore.saveIdentities,
+    );
+    FlutterError.onError = previous;
+    expect(identitiesNotifier.value, isEmpty);
+
+    // The keyring is unlocked later in the same session.
+    store.failReads = false;
+    await openIdentitiesScreen(tester);
+    await tester.tap(find.byKey(const Key('generateIdentityButton')));
+    await tester.pumpAndSettle();
+
+    final added = activeIdentityPubkeyNotifier.value;
+    final saved = await SettingsStore.loadIdentities();
+    expect(saved.map((i) => i.pubkeyHex), [earlier, added]);
+    expect(identitiesNotifier.value.map((i) => i.pubkeyHex), [earlier, added]);
   });
 }

@@ -1,7 +1,9 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:sputnik/models/identity.dart';
 import 'package:sputnik/services/settings_store.dart';
 
 import 'support/fake_secret_store.dart';
@@ -12,9 +14,14 @@ class _LockedSlotSecretStore extends FakeSecretStore {
 
   final String _pubkeyHex;
 
+  // Refuses every write, like a keyring that stays locked.
+  bool failAllWrites = false;
+
   @override
   Future<void> write(String key, String value) {
-    if (key == 'identity_secret_$_pubkeyHex') throw StateError('locked');
+    if (failAllWrites || key == 'identity_secret_$_pubkeyHex') {
+      throw StateError('locked');
+    }
     return super.write(key, value);
   }
 }
@@ -191,6 +198,71 @@ void main() {
     expect(await SettingsStore.loadHiddenPaymentTargetTypes(), {
       'monero',
       'paypal',
+    });
+  });
+
+  group('the plaintext identity list from before secure storage', () {
+    // What SettingsStore.saveIdentities wrote to SharedPreferences before
+    // identities moved to secure storage: private keys included.
+    String plaintextList(String privkeyHex) => jsonEncode([
+      {'pubkeyHex': 'a' * 64, 'privkeyHex': privkeyHex, 'createdAt': 0},
+    ]);
+
+    test('is moved into secure storage and deleted', () async {
+      SharedPreferences.setMockInitialValues({
+        'identities': plaintextList('plaintext-secret'),
+      });
+
+      await SettingsStore.migratePlaintextIdentities();
+      final identities = await SettingsStore.loadIdentities();
+
+      expect(identities.single.pubkeyHex, 'a' * 64);
+      expect(await SettingsStore.loadPrivateKey('a' * 64), 'plaintext-secret');
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('identities'), isNull);
+      expect(
+        await SettingsStore.secretStore.read('identities'),
+        isNot(contains('plaintext-secret')),
+      );
+    });
+
+    test('does not replace an identity already in secure storage', () async {
+      await SettingsStore.savePrivateKey('a' * 64, 'current-secret');
+      await SettingsStore.saveIdentities([
+        Identity(
+          pubkeyHex: 'a' * 64,
+          createdAt: DateTime.fromMillisecondsSinceEpoch(0),
+        ),
+      ]);
+      SharedPreferences.setMockInitialValues({
+        'identities': plaintextList('stale-secret'),
+      });
+
+      await SettingsStore.migratePlaintextIdentities();
+      final identities = await SettingsStore.loadIdentities();
+
+      expect(identities, hasLength(1));
+      expect(await SettingsStore.loadPrivateKey('a' * 64), 'current-secret');
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('identities'), isNull);
+    });
+
+    test('is kept if secure storage cannot take it', () async {
+      SettingsStore.secretStore = _LockedSlotSecretStore('unused')
+        ..failAllWrites = true;
+      SharedPreferences.setMockInitialValues({
+        'identities': plaintextList('plaintext-secret'),
+      });
+      final reported = <FlutterErrorDetails>[];
+      final previous = FlutterError.onError;
+      FlutterError.onError = reported.add;
+
+      await SettingsStore.migratePlaintextIdentities();
+
+      FlutterError.onError = previous;
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('identities'), contains('plaintext-secret'));
+      expect(reported.single.exceptionAsString(), isNot(contains('secret')));
     });
   });
 }

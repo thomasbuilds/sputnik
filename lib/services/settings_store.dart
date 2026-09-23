@@ -108,6 +108,38 @@ class SettingsStore {
     }
   }
 
+  /// Before identities moved to secure storage, the whole list -- private
+  /// keys included -- was kept in plain SharedPreferences. Folds any such
+  /// list into the secure index, where [loadIdentities] moves each inline key
+  /// into its own slot, and only then deletes the plaintext copy.
+  static Future<void> migratePlaintextIdentities() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final plaintext = prefs.getString(_identitiesKey);
+      if (plaintext == null) return;
+
+      final legacy = jsonDecode(plaintext) as List<dynamic>;
+      final raw = await secretStore.read(_identitiesKey);
+      final index = raw == null ? <dynamic>[] : jsonDecode(raw) as List;
+      final known = {
+        for (final item in index)
+          if (item is Map) item['pubkeyHex'],
+      };
+      for (final item in legacy) {
+        if (item is Map && !known.contains(item['pubkeyHex'])) index.add(item);
+      }
+      await secretStore.write(_identitiesKey, jsonEncode(index));
+      await prefs.remove(_identitiesKey);
+    } catch (_, stack) {
+      // Not the original error: a FormatException would quote the key.
+      _reportPersistenceError(
+        'migrating the plaintext identity list',
+        StateError('migration failed; the plaintext copy was kept'),
+        stack,
+      );
+    }
+  }
+
   static Future<ThemeMode> loadThemeMode() async {
     final prefs = await SharedPreferences.getInstance();
     return switch (prefs.getString(_themeModeKey)) {

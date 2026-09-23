@@ -96,10 +96,12 @@ Future<void> main() async {
     SettingsStore.loadCustomRelays,
     SettingsStore.saveCustomRelays,
   );
-  final identitiesBound = bindPersisted(
-    identitiesNotifier,
-    SettingsStore.loadIdentities,
-    SettingsStore.saveIdentities,
+  final identitiesBound = SettingsStore.migratePlaintextIdentities().then(
+    (_) => bindPersisted(
+      identitiesNotifier,
+      SettingsStore.loadIdentities,
+      SettingsStore.saveIdentities,
+    ),
   );
   final activeIdentityPubkeyBound = bindPersisted(
     activeIdentityPubkeyNotifier,
