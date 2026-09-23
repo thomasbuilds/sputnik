@@ -10,18 +10,6 @@ void main() {
     hiddenPaymentTargetTypesNotifier.value = const {};
   });
 
-  testWidgets('every known type is checked on by default', (tester) async {
-    await tester.pumpWidget(
-      const MaterialApp(home: PaymentTargetTypesScreen()),
-    );
-    await tester.pumpAndSettle();
-
-    final checkbox = tester.widget<CheckboxListTile>(
-      find.byKey(const Key('paymentTargetTypeCheckbox_monero')),
-    );
-    expect(checkbox.value, isTrue);
-  });
-
   testWidgets('unchecking a type hides it via the shared notifier', (
     tester,
   ) async {

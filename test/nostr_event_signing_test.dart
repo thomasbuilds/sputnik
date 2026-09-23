@@ -38,6 +38,20 @@ void main() {
     ]);
   });
 
+  test('refuses to sign for a pubkey the secret key does not match', () {
+    final someoneElse = generateNostrKeyPair();
+
+    expect(
+      () => signEvent(
+        seckeyHex: keypair.privateKeyHex,
+        pubkeyHex: someoneElse.publicKeyHex,
+        kind: 1,
+        content: 'not mine to sign',
+      ),
+      throwsStateError,
+    );
+  });
+
   test(
     'serializes only the NIP-01 escapes; other characters stay verbatim',
     () {
@@ -48,7 +62,7 @@ void main() {
         tags: [
           ['t', 'x\u0001y'],
         ],
-        content: 'a\u0001b\u001fc\u007fd\ne\tf\\"g\u2028',
+        content: 'a\u0001b\u001fc\u007fd\ne\tf\\"g\u2028h\bi\fj\rk',
         createdAt: DateTime.fromMillisecondsSinceEpoch(1700000000 * 1000),
       );
 
@@ -62,7 +76,13 @@ void main() {
           'f'
           r'\\'
           r'\"'
-          'g\u2028"]';
+          'g\u2028h'
+          r'\b'
+          'i'
+          r'\f'
+          'j'
+          r'\r'
+          'k"]';
       expect(event.id, sha256.convert(utf8.encode(expected)).toString());
       expect(NostrEvent.fromJson(event.toJson()).content, event.content);
     },

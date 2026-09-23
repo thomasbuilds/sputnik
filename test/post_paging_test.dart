@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sputnik/nostr/nostr.dart';
 import 'package:sputnik/services/post_cursor.dart';
@@ -212,6 +214,24 @@ void main() {
       final again = await cursor.first();
 
       expect(again.map((p) => p.content), ['note 0', 'note 1', 'note 2']);
+      expect(cursor.hasMore.value, isTrue);
+    });
+
+    test('a start-over that finishes late does not undo a newer one', () async {
+      final pages = <Completer<PostPage>>[];
+      final cursor = PostCursor((until) {
+        final page = Completer<PostPage>();
+        pages.add(page);
+        return page.future;
+      });
+
+      final stale = cursor.first();
+      final fresh = cursor.first();
+      pages[1].complete(PostPage([nostrPostFromEvent(_note(1))], _base));
+      await fresh;
+      pages[0].complete(const PostPage([], null));
+      await stale;
+
       expect(cursor.hasMore.value, isTrue);
     });
 

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sputnik/main.dart';
 import 'package:sputnik/models/identity.dart';
@@ -23,6 +25,10 @@ class _FlakyRelay extends RelayClient {
   final List<String> followed;
   _Relays relays = _Relays.down;
   NostrEvent? lastPublished;
+  final published = <NostrEvent>[];
+
+  // When set, a publish waits for it to complete.
+  Completer<void>? publishGate;
 
   @override
   Future<List<NostrEvent>> query(
@@ -74,7 +80,9 @@ class _FlakyRelay extends RelayClient {
     NostrEvent event,
     Set<String> relayUrls,
   ) async {
+    await publishGate?.future;
     lastPublished = event;
+    published.add(event);
     return {
       for (final url in relayUrls)
         url: const RelayPublishResult(RelayPublishOutcome.accepted),
@@ -181,6 +189,47 @@ void main() {
     expect([
       for (final tag in relay.lastPublished!.tags) tag[1],
     ], unorderedEquals([alice, bob, carol]));
+  });
+
+  test(
+    'follows queued by one identity are not published by the next',
+    () async {
+      final next = generateNostrKeyPair();
+      await SettingsStore.savePrivateKey(next.publicKeyHex, next.privateKeyHex);
+      final relay = _FlakyRelay(next.publicKeyHex, [])..relays = _Relays.up;
+
+      scheduleFollowingSync(alice, follow: true, relayClient: relay);
+      activeIdentityPubkeyNotifier.value = next.publicKeyHex;
+      scheduleFollowingSync(bob, follow: true, relayClient: relay);
+      await _waitForSync();
+
+      final byNext = [
+        for (final event in relay.published)
+          if (event.pubkey == next.publicKeyHex) event,
+      ];
+      expect([for (final tag in byNext.last.tags) tag[1]], [bob]);
+      expect([
+        for (final event in byNext)
+          for (final tag in event.tags) tag[1],
+      ], isNot(contains(alice)));
+    },
+  );
+
+  test('a publish that ends after switching identity leaves the new one\'s '
+      'follows alone', () async {
+    final relay = _FlakyRelay(me, [alice])
+      ..relays = _Relays.up
+      ..publishGate = Completer<void>();
+
+    scheduleFollowingSync(bob, follow: true, relayClient: relay);
+    await _waitForSync();
+    activeIdentityPubkeyNotifier.value = 'dd' * 32;
+    myFollowingNotifier.value = {carol};
+    relay.publishGate!.complete();
+    await _waitForSync();
+
+    expect(relay.lastPublished!.pubkey, me);
+    expect(myFollowingNotifier.value, {carol});
   });
 
   test('changes made in a row are all applied', () async {

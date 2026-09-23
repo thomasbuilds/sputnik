@@ -3,7 +3,22 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sputnik/nostr/nostr.dart';
 
+import 'support/answering_relay_client.dart';
 import 'support/in_memory_relay_client.dart';
+
+// Returns every event it holds, unsorted and past any limit, as several
+// relays each sending their own copy would.
+class _EveryCopy extends RelayClient with AnsweringRelayClient {
+  const _EveryCopy(this.events);
+
+  final List<NostrEvent> events;
+
+  @override
+  Future<List<NostrEvent>> query(
+    Set<String> relayUrls,
+    NostrFilter filter,
+  ) async => events;
+}
 
 void main() {
   Map<String, dynamic> edit(String? existing, Map<String, String> fields) =>
@@ -90,10 +105,16 @@ void main() {
     final me = 'ab' * 32;
 
     test('returns the newest event of the kind by the author', () async {
-      final client = InMemoryRelayClient([
+      final client = _EveryCopy([
         fakeEvent(id: '01', pubkey: me, kind: 10002, createdAt: DateTime(2024)),
         fakeEvent(id: '02', pubkey: me, kind: 10002, createdAt: DateTime(2025)),
-        fakeEvent(id: '03', pubkey: 'cd' * 32, kind: 10002),
+        fakeEvent(
+          id: '03',
+          pubkey: 'cd' * 32,
+          kind: 10002,
+          createdAt: DateTime(2026),
+        ),
+        fakeEvent(id: '04', pubkey: me, kind: 3, createdAt: DateTime(2026)),
       ]);
 
       final own = await fetchOwnReplaceable(

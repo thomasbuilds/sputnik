@@ -83,6 +83,17 @@ void main() {
       expect(parsed?.event?.content, 'hello');
     });
 
+    // The pool would also ignore it, but only this check spares the
+    // signature check for events nobody asked for.
+    test('an EVENT for any other subscription is dropped', () async {
+      final parsed = await parser.parse(
+        eventMessage('stale'),
+        subscriptionIds: {'live'},
+      );
+
+      expect(parsed, isNull);
+    });
+
     test('without a subscription list every EVENT is parsed', () async {
       expect(await parser.parse(eventMessage('any')), isNotNull);
     });

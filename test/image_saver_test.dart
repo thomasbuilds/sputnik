@@ -1,5 +1,7 @@
+import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sputnik/services/image_saver.dart';
 import 'package:sputnik/services/media_loader.dart';
@@ -44,6 +46,55 @@ void main() {
       lessThanOrEqualTo(64),
     );
   });
+
+  test(
+    'holds a fallback copy to the hash, but not the author\'s own URL',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      server.listen((request) {
+        if (request.uri.path == '/cat.png') {
+          request.response.add(_png());
+        } else {
+          request.response.statusCode = HttpStatus.notFound;
+        }
+        request.response.close();
+      });
+      // Loopback is refused by the guarded client, so use a plain one here.
+      replaceSharedImageClient(HttpClient.new);
+      addTearDown(() => replaceSharedImageClient(null));
+      final base = 'http://127.0.0.1:${server.port}';
+      Future<String?> backend(Uint8List bytes, String name) async => name;
+
+      // The author's URL is gone, so the copy comes from a fallback server.
+      final matching = await saveImage(
+        MediaSource(
+          url: '$base/gone.png',
+          sha256: sha256.convert(_png()).toString(),
+          fallbackUrls: ['$base/cat.png'],
+        ),
+        backend: backend,
+      );
+      final tampered = await saveImage(
+        MediaSource(
+          url: '$base/gone.png',
+          sha256: 'ab' * 32,
+          fallbackUrls: ['$base/cat.png'],
+        ),
+        backend: backend,
+      );
+      // NIP-96 hosts re-encode uploads, so the author's own URL is not held
+      // to the hash its name or tags carry.
+      final ownUrl = await saveImage(
+        MediaSource(url: '$base/cat.png', sha256: 'ab' * 32),
+        backend: backend,
+      );
+
+      expect(matching.outcome, SaveOutcome.saved);
+      expect(tampered.outcome, SaveOutcome.failed);
+      expect(ownUrl.outcome, SaveOutcome.saved);
+    },
+  );
 
   test('reports each way saving can end', () async {
     final source = MediaSource(url: 'https://a.example/cat.png');
