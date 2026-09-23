@@ -13,12 +13,15 @@ class OwnEvent {
   final bool conclusive;
 }
 
-/// Queries [relayUrls] for the newest [kind] event by [pubkeyHex].
+/// Queries [relayUrls] for the newest [kind] event by [pubkeyHex]. With
+/// [requireAllRelays], a found event is only [OwnEvent.conclusive] when every
+/// relay answered, since a silent one may hold a newer copy.
 Future<OwnEvent> fetchOwnReplaceable(
   RelayClient client, {
   required int kind,
   required String pubkeyHex,
   required Set<String> relayUrls,
+  bool requireAllRelays = false,
 }) async {
   final result = await client.queryWithStatus(
     relayUrls,
@@ -35,11 +38,14 @@ Future<OwnEvent> fetchOwnReplaceable(
     // A lagging relay can hold an older copy while the newest one is silent.
     conclusive:
         result.allRelaysAnswered ||
-        (own.isNotEmpty && result.answeredRelays * 2 > result.queriedRelays),
+        (!requireAllRelays &&
+            own.isNotEmpty &&
+            result.answeredRelays * 2 > result.queriedRelays),
   );
 }
 
-/// Relays keep the older of two same-second events, so an edit must be newer.
+/// Of two same-second versions relays keep the lowest ID (NIP-01), which may
+/// be the old one, so an edit must be at least a second newer.
 DateTime nextReplaceableTime(NostrEvent? previous) {
   final now = DateTime.now();
   if (previous == null) return now;

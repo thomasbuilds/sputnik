@@ -96,7 +96,9 @@ String imageFileName(String url, List<int> bytes) {
 }
 
 Future<Uint8List> _fetchOriginal(MediaSource source) {
-  return source.fetch((uri) => fetchImageBytes(uri, sha256: source.sha256));
+  return source.fetch(
+    (uri) => fetchImageBytes(uri, sha256: source.hashFor(uri)),
+  );
 }
 
 /// Downloads the original image at [source] and saves it.

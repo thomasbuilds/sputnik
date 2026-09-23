@@ -4,7 +4,11 @@ import '../main.dart';
 import '../models/app_seed_color.dart';
 import '../models/identity.dart';
 import '../models/relay.dart';
+import '../nostr/nip05.dart';
+import '../services/blossom_servers.dart';
 import '../services/cache_store.dart';
+import '../widgets/linkified_text.dart';
+import '../widgets/quoted_note.dart';
 import 'identities_screen.dart';
 import 'payment_target_types_screen.dart';
 import 'relays_screen.dart';
@@ -34,6 +38,11 @@ Future<void> _confirmClearCache(BuildContext context) async {
 
   await CacheStore.clearAll();
   profileCacheNotifier.value = {};
+  // The in-memory caches built from relay data go too.
+  clearQuotedNoteCache();
+  clearMentionLookups();
+  clearNip05Cache();
+  resetBlossomServerCache();
 
   if (context.mounted) {
     ScaffoldMessenger.of(context)

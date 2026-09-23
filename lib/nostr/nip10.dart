@@ -7,6 +7,9 @@ const _maxReplyMentions = 50;
 
 final _pubkeyPattern = RegExp(r'^[0-9a-fA-F]{64}$');
 
+/// Event IDs are 32-byte hex (NIP-01); anything else can't be looked up.
+bool _isEventId(String value) => _pubkeyPattern.hasMatch(value);
+
 bool _hasNip10Marker(List<String> tag) =>
     tag.length >= 4 && _nip10Markers.contains(tag[3]);
 
@@ -18,7 +21,7 @@ List<List<String>> _eTags(NostrEvent event) {
   };
   return [
     for (final tag in event.tags)
-      if (tag.length > 1 && tag[0] == 'e')
+      if (tag.length > 1 && tag[0] == 'e' && _isEventId(tag[1]))
         if (_hasNip10Marker(tag) || !quoted.contains(tag[1].toLowerCase())) tag,
   ];
 }

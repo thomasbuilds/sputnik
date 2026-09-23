@@ -62,6 +62,26 @@ void main() {
       ]);
     });
 
+    test('keeps an IPv6 server usable, and later servers reachable', () {
+      final event = fakeEvent(
+        kind: 10063,
+        tags: [
+          ['server', 'https://[2001:4860:4860::8888]/'],
+          ['server', 'https://[2001:db8::1]:8443/path'],
+          ['server', 'https://next.example'],
+        ],
+      );
+
+      final servers = blossomServersFromEvent(event);
+
+      expect(servers, [
+        'https://[2001:4860:4860::8888]',
+        'https://[2001:db8::1]:8443',
+        'https://next.example',
+      ]);
+      expect(blossomUrls(servers, _hash, '.png').last.host, 'next.example');
+    });
+
     test('drops plain http, credentials, junk, and other tags', () {
       final event = fakeEvent(
         kind: 10063,

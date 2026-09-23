@@ -53,14 +53,20 @@ class RelayProfileRepository {
 
     final requested = {for (final pubkey in toFetch) pubkey.toLowerCase()};
     final metadataByPubkey = <String, NostrMetadata>{};
+    final createdAtByPubkey = <String, int>{};
     for (final event in events) {
       // Any signed event from a relay is authentic, not necessarily asked for.
       if (event.kind != 0 || !requested.contains(event.pubkey)) continue;
       if (metadataByPubkey.containsKey(event.pubkey)) continue;
+      final createdAt = event.createdAt.millisecondsSinceEpoch ~/ 1000;
+      final known = CacheStore.profileCreatedAt(event.pubkey);
+      // A lagging relay's older copy must not replace a newer one.
+      if (known != null && createdAt < known) continue;
       try {
         metadataByPubkey[event.pubkey] = NostrMetadata.fromContent(
           event.content,
         );
+        createdAtByPubkey[event.pubkey] = createdAt;
       } catch (_) {
         // Metadata content is malformed; skip event for this author.
       }
@@ -71,7 +77,10 @@ class RelayProfileRepository {
         ...profileCacheNotifier.value,
         ...metadataByPubkey,
       };
-      await CacheStore.putProfiles(metadataByPubkey);
+      await CacheStore.putProfiles(
+        metadataByPubkey,
+        createdAt: createdAtByPubkey,
+      );
     }
 
     return {...cached, ...metadataByPubkey};

@@ -174,14 +174,14 @@ Future<bool> _retractReaction(
   final messenger = ScaffoldMessenger.of(context);
   final repository = RelayReactionsRepository(client: relayClient);
 
-  final own = await repository.fetchOwnReaction(
+  final own = await repository.fetchOwnReactions(
     myPubkeyHex: myPubkeyHex,
     noteId: note.id,
     kind: kind,
     relayUrls: relayUrls,
   );
   if (!context.mounted) return false;
-  if (own == null) {
+  if (own.isEmpty) {
     messenger.showSnackBar(
       const SnackBar(
         content: Text('Could not find that on any of your relays'),
@@ -208,10 +208,10 @@ Future<bool> _retractReaction(
     return false;
   }
 
-  final results = await repository.publishRetraction(
+  final results = await repository.publishRetractions(
     seckeyHex: privkeyHex,
     myPubkeyHex: myPubkeyHex,
-    target: own,
+    targets: own,
     relayUrls: relayUrls,
   );
   final accepted = results.values

@@ -329,10 +329,13 @@ class _PostHeader extends StatelessWidget {
     final theme = Theme.of(context);
     final npub = npubFromHex(note.pubkey);
     final myPubkeyHex = activeIdentityPubkeyNotifier.value?.toLowerCase();
-    final reactionNote = note.copyWith(
-      likedByMe: likerPubkeys?.contains(myPubkeyHex) ?? note.likedByMe,
-      repostedByMe: reposterPubkeys?.contains(myPubkeyHex) ?? note.repostedByMe,
-    );
+    final reactionNote = likerPubkeys == null || reposterPubkeys == null
+        ? note
+        : note.copyWith(
+            likedByMe: likerPubkeys!.contains(myPubkeyHex),
+            repostedByMe: reposterPubkeys!.contains(myPubkeyHex),
+            reactionsFor: activeIdentityPubkeyNotifier.value,
+          );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

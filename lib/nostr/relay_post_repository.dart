@@ -6,6 +6,8 @@ import 'models/nostr_post.dart';
 import 'nip10.dart';
 import 'relay_client.dart';
 
+final _eventIdPattern = RegExp(r'^[0-9a-f]{64}$');
+
 /// Replies are dropped after the query, so ask for more to still fill a page.
 const _replyOverfetch = 3;
 
@@ -76,9 +78,17 @@ class RelayPostRepository {
               limit: queryLimit,
             ),
       ];
-      final eventsByFilter = await Future.wait(
-        filters.map((filter) => client.query(relayUrls, filter)),
-      );
+      // Each relay applies the limit on its own, so each relay's answer to
+      // each filter gets its own cutoff below.
+      final relaySets = relayUrls.length > 1
+          ? [
+              for (final relayUrl in relayUrls) {relayUrl},
+            ]
+          : [relayUrls];
+      final eventsByFilter = await Future.wait([
+        for (final filter in filters)
+          for (final relays in relaySets) client.query(relays, filter),
+      ]);
 
       final valid = [
         for (final events in eventsByFilter)
@@ -89,8 +99,8 @@ class RelayPostRepository {
                 event,
           ],
       ];
-      // A chunk that hit its limit may lack older events, so only trust events
-      // at or newer than the newest such cutoff.
+      // A relay's answer that hit its limit may lack older events, so only
+      // trust events at or newer than the newest such cutoff.
       DateTime? horizon;
       for (var i = 0; i < valid.length; i++) {
         if (eventsByFilter[i].length < queryLimit || valid[i].isEmpty) continue;
@@ -130,8 +140,16 @@ class RelayPostRepository {
     List<String> authors,
     Set<String> relayUrls, {
     DateTime? until,
+  }) async => (await fetchRepostPage(authors, relayUrls, until: until)).posts;
+
+  /// Like [fetchReposts], paged by the reposts the relays returned, so one
+  /// that cannot be resolved does not end the paging.
+  Future<PostPage> fetchRepostPage(
+    List<String> authors,
+    Set<String> relayUrls, {
+    DateTime? until,
   }) async {
-    if (authors.isEmpty) return const [];
+    if (authors.isEmpty) return const PostPage([], null);
     final wanted = {for (final author in authors) author.toLowerCase()};
 
     final eventsByChunk = await Future.wait(
@@ -165,7 +183,12 @@ class RelayPostRepository {
         );
       }),
     );
-    return [for (final post in resolved) ?post];
+    final page = reposts.take(limit).toList();
+    var next = page.length >= limit ? page.last.createdAt : null;
+    if (next != null && until != null && !next.isBefore(until)) {
+      next = until.subtract(const Duration(seconds: 1));
+    }
+    return PostPage([for (final post in resolved) ?post], next);
   }
 
   /// The kind 1 note [repost] points at.
@@ -186,9 +209,11 @@ class RelayPostRepository {
 
     String? targetId;
     for (final tag in repost.tags) {
-      if (tag.length > 1 && tag[0] == 'e') targetId = tag[1];
+      if (tag.length > 1 && tag[0] == 'e') targetId = tag[1].toLowerCase();
     }
-    return targetId == null ? null : fetchEventById(targetId);
+    return targetId == null || !_eventIdPattern.hasMatch(targetId)
+        ? null
+        : fetchEventById(targetId);
   }
 }
 

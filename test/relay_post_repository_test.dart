@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sputnik/nostr/nostr.dart';
 
+import 'support/in_memory_relay_client.dart';
+
 class _FakeRelayClient extends RelayClient {
   _FakeRelayClient(this.reposts, this.originalsById);
 
@@ -116,5 +118,37 @@ void main() {
     expect(fallback.content, 'hello via fallback fetch');
     expect(fallback.author.pubkey, otherAuthorPubkey);
     expect(fallback.repostedByPubkey, reposterPubkey);
+  });
+  test('a repost without content is looked up by a lowercase ID, and one '
+      'whose e tag is not an ID is not looked up at all', () async {
+    final original = fakeEvent(id: 'c3' * 32, pubkey: otherAuthorPubkey);
+    final upper = fakeEvent(
+      id: 'e4' * 32,
+      pubkey: reposterPubkey,
+      kind: 6,
+      tags: [
+        ['e', original.id.toUpperCase(), ''],
+      ],
+    );
+    final garbage = fakeEvent(
+      id: 'e5' * 32,
+      pubkey: reposterPubkey,
+      kind: 6,
+      tags: [
+        ['e', 'note1notanid', ''],
+      ],
+    );
+    final client = InMemoryRelayClient([original, upper, garbage]);
+
+    final posts = await RelayPostRepository(
+      relayUrls: const {'wss://relay.example'},
+      client: client,
+    ).fetchReposts([reposterPubkey], const {'wss://relay.example'});
+
+    expect(posts.map((post) => post.id), [original.id]);
+    final hex = RegExp(r'^[0-9a-f]{64}$');
+    for (final filter in client.queries) {
+      expect(filter.ids ?? const <String>[], everyElement(matches(hex)));
+    }
   });
 }

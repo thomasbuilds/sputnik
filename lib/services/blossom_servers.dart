@@ -1,5 +1,3 @@
-import 'package:flutter/foundation.dart';
-
 import '../main.dart';
 import '../nostr/models/nostr_media.dart';
 import '../nostr/relay_blossom_list_repository.dart';
@@ -35,7 +33,7 @@ Future<List<String>> blossomServersFor(
   }();
 }
 
-@visibleForTesting
+/// Forgets every looked-up server list.
 void resetBlossomServerCache() {
   _known.clear();
   _inFlight.clear();

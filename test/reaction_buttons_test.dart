@@ -295,4 +295,44 @@ void main() {
       ]);
     },
   );
+  // Feed lists build NoteTile(note: notes[i]) without keys, so after a
+  // refresh or an un-bookmark the same button state is handed another note.
+  testWidgets('a like does not carry over to another note in the same slot', (
+    tester,
+  ) async {
+    final fakeClient = _FakeRelayClient(target, RelayPublishOutcome.accepted);
+    final other = Note(
+      id: 'ab' * 32,
+      pubkey: 'bb' * 32,
+      displayName: 'Bob',
+      handle: 'bob',
+      content: 'another note',
+      postedAt: 'now',
+      createdAt: DateTime.now(),
+    );
+    var notes = [note];
+    late StateSetter setList;
+    await pumpButton(
+      tester,
+      StatefulBuilder(
+        builder: (context, setState) {
+          setList = setState;
+          return ListView.builder(
+            itemCount: notes.length,
+            itemBuilder: (context, index) =>
+                LikeButton(note: notes[index], relayClient: fakeClient),
+          );
+        },
+      ),
+    );
+
+    await tester.tap(find.byIcon(Icons.favorite_border));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.favorite), findsOneWidget);
+
+    setList(() => notes = [other]);
+    await tester.pump();
+
+    expect(find.byIcon(Icons.favorite_border), findsOneWidget);
+  });
 }

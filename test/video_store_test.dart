@@ -98,24 +98,31 @@ void main() {
     expect(requests, 1);
   });
 
-  test('checks the hash and deletes a file that does not match', () async {
-    serve((_) => [1, 2, 3]);
+  test(
+    'checks a fallback\'s hash and deletes a file that does not match',
+    () async {
+      serve((_) => [1, 2, 3]);
+      // Nothing listens on port 1, so the author's own URL fails and the
+      // fallback is what gets checked.
+      MediaSource source(String sha256) => MediaSource(
+        url: 'http://127.0.0.1:1/v.mp4',
+        sha256: sha256,
+        fallbackUrls: [base.resolve('/v.mp4').toString()],
+      );
 
-    await expectLater(
-      store.fetch(
-        MediaSource(url: base.resolve('/v.mp4').toString(), sha256: 'ab' * 32),
-      ),
-      throwsA(
-        isA<HttpException>().having(
-          (e) => e.message,
-          'message',
-          contains('Hash mismatch'),
+      await expectLater(store.fetch(source('ab' * 32)), throwsException);
+      expect(requests, 1);
+      expect(filesOnDisk(), isEmpty);
+
+      // The same fallback passes once the hash is the real one.
+      final file = await store.fetch(
+        source(
+          '039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81',
         ),
-      ),
-    );
-
-    expect(filesOnDisk(), isEmpty);
-  });
+      );
+      expect(file.readAsBytesSync(), [1, 2, 3]);
+    },
+  );
 
   test('cancelling stops the download and removes the partial file', () async {
     server.listen((request) {

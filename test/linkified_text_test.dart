@@ -170,6 +170,19 @@ void main() {
   });
 
   group('mentions', () {
+    testWidgets('a long name cut inside an emoji still renders', (
+      tester,
+    ) async {
+      profileCacheNotifier.value = {
+        _hex: _profile('{"name":"${'a' * 36}\u{1F600}\u{1F600}\u{1F600}"}'),
+      };
+
+      await _pumpText(tester, 'hi $_npub');
+
+      expect(tester.takeException(), isNull);
+      expect(_shown(tester), 'hi @${'a' * 36}...');
+    });
+
     testWidgets('a cited npub shows the profile name instead', (tester) async {
       profileCacheNotifier.value = {_hex: _profile('{"display_name":"Alice"}')};
 

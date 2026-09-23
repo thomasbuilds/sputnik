@@ -98,4 +98,22 @@ void main() {
       expect(paymentTargetTypeSubtitle('paypal'), isNull);
     });
   });
+
+  testWidgets('an address cut inside an emoji still renders', (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: PaymentTargetChip(
+            target: NostrPaymentTarget(
+              type: 'bitcoin',
+              address: 'abcdefgh\u{1F600}ijklmnopqrstuvwxyz',
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('abcdefgh...wxyz'), findsOneWidget);
+  });
 }

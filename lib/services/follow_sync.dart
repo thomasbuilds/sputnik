@@ -18,11 +18,9 @@ List<Duration> followSyncRetryDelays = const [
   Duration(minutes: 10),
 ];
 
-/// Unpublished changes (pubkey -> follow?), sent on top of the relays' list.
-final _pending = <String, bool>{};
-
-/// The identity [_pending] belongs to; switching identity discards the queue.
-String? _pendingFor;
+/// Unpublished changes per identity (identity -> pubkey -> follow?), each
+/// sent on top of that identity's list on the relays.
+final _pendingByIdentity = <String, Map<String, bool>>{};
 
 Timer? _timer;
 bool _syncRunning = false;
@@ -38,9 +36,8 @@ void scheduleFollowingSync(
   final myPubkeyHex = activeIdentityPubkeyNotifier.value;
   if (myPubkeyHex == null) return;
 
-  if (_pendingFor != myPubkeyHex) _pending.clear();
-  _pendingFor = myPubkeyHex;
-  _pending[targetPubkeyHex.toLowerCase()] = follow;
+  (_pendingByIdentity[myPubkeyHex] ??= {})[targetPubkeyHex.toLowerCase()] =
+      follow;
 
   _syncClient = relayClient;
   _timer?.cancel();
@@ -50,8 +47,7 @@ void scheduleFollowingSync(
 @visibleForTesting
 void resetFollowSync() {
   _timer?.cancel();
-  _pending.clear();
-  _pendingFor = null;
+  _pendingByIdentity.clear();
   _failedAttempts = 0;
 }
 
@@ -71,14 +67,17 @@ Future<void> _runSync() async {
   if (_syncRunning) return;
   _syncRunning = true;
   try {
-    while (_pending.isNotEmpty) {
-      final myPubkeyHex = _pendingFor!;
-      final changes = Map<String, bool>.of(_pending);
+    while (_pendingByIdentity.isNotEmpty) {
+      final myPubkeyHex = _pendingByIdentity.keys.first;
+      final pending = _pendingByIdentity[myPubkeyHex]!;
+      final changes = Map<String, bool>.of(pending);
 
       final privkeyHex = await SettingsStore.loadPrivateKey(myPubkeyHex);
       if (privkeyHex == null) {
+        // The identity was deleted; its queue can never be published.
+        _pendingByIdentity.remove(myPubkeyHex);
         _reportSyncFailure();
-        return;
+        continue;
       }
 
       final outcome = await RelayContactsRepository(client: _syncClient)
@@ -99,14 +98,15 @@ Future<void> _runSync() async {
 
       // Anything toggled again mid-publish stays queued for the next pass.
       for (final change in changes.entries) {
-        if (_pending[change.key] == change.value) _pending.remove(change.key);
+        if (pending[change.key] == change.value) pending.remove(change.key);
       }
+      if (pending.isEmpty) _pendingByIdentity.remove(myPubkeyHex);
 
       if (activeIdentityPubkeyNotifier.value == myPubkeyHex) {
         myFollowingNotifier.value = {
           for (final pubkey in outcome.following)
-            if (_pending[pubkey] != false) pubkey,
-          for (final change in _pending.entries)
+            if (pending[pubkey] != false) pubkey,
+          for (final change in pending.entries)
             if (change.value) change.key,
         };
       }

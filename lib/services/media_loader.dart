@@ -287,6 +287,14 @@ class MediaSource {
   /// The author's Blossom servers, asked for only once every URL has failed.
   final Future<List<String>> Function()? serverLookup;
 
+  /// The hash the bytes fetched from [uri] must match.
+  ///
+  /// None for [url] itself: the author chose that host, and NIP-96 hosts such
+  /// as nostr.build name a file after the hash of the upload before they
+  /// re-encode it, and may redirect to a resized copy. Every other source
+  /// (fallbacks, Blossom servers) is held to [sha256].
+  String? hashFor(Uri uri) => uri == Uri.tryParse(url) ? null : sha256;
+
   /// Tries [url], the fallbacks, then the author's servers.
   Future<T> fetch<T>(Future<T> Function(Uri uri) attempt) async {
     final tried = <String>{};
@@ -380,7 +388,7 @@ class BoundedNetworkImage extends ImageProvider<BoundedNetworkImage> {
     final bytes = await source.fetch(
       (uri) => fetchImageBytes(
         uri,
-        sha256: source.sha256,
+        sha256: source.hashFor(uri),
         clientFactory: clientFactory,
       ),
     );

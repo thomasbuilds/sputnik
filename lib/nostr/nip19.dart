@@ -1,5 +1,6 @@
 import 'bech32.dart';
 import 'hex.dart';
+import 'models/text_sanitizer.dart';
 
 String? _hexFromBareEntity(
   String input,
@@ -83,9 +84,8 @@ String truncateMiddle(
   required int suffixLength,
 }) {
   if (value.length <= totalLength) return value;
-  final prefixLength = totalLength - suffixLength - 3;
-  final prefix = value.substring(0, prefixLength);
-  final suffix = value.substring(value.length - suffixLength);
+  final prefix = safePrefix(value, totalLength - suffixLength - 3);
+  final suffix = safeSuffix(value, suffixLength);
   return '$prefix...$suffix';
 }
 
@@ -106,21 +106,26 @@ typedef NostrUriTarget = ({String? pubkeyHex, String? eventIdHex});
 ///
 /// Returns null if it is anything else. Exactly one field of the result is set.
 NostrUriTarget? decodeNostrUri(String text) {
-  final value = text.startsWith('nostr:') ? text.substring(6) : text;
+  // The scheme is case-insensitive (RFC 3986) and bech32 may be all
+  // uppercase (e.g. from a QR code); the decoders still refuse mixed case.
+  final lower = text.toLowerCase();
+  final start = lower.startsWith('nostr:') ? 6 : 0;
+  final value = text.substring(start);
+  final kind = lower.substring(start);
 
-  if (value.startsWith('npub1')) {
+  if (kind.startsWith('npub1')) {
     final hex = hexFromNpub(value);
     return hex == null ? null : (pubkeyHex: hex, eventIdHex: null);
   }
-  if (value.startsWith('nprofile1')) {
+  if (kind.startsWith('nprofile1')) {
     final hex = hexFromNprofile(value);
     return hex == null ? null : (pubkeyHex: hex, eventIdHex: null);
   }
-  if (value.startsWith('note1')) {
+  if (kind.startsWith('note1')) {
     final hex = hexFromNote(value);
     return hex == null ? null : (pubkeyHex: null, eventIdHex: hex);
   }
-  if (value.startsWith('nevent1')) {
+  if (kind.startsWith('nevent1')) {
     final hex = hexFromNevent(value);
     return hex == null ? null : (pubkeyHex: null, eventIdHex: hex);
   }

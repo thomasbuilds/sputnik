@@ -105,6 +105,15 @@ void main() {
     expect(decodeNostrUri('nostr:$npub1'), (pubkeyHex: hex1, eventIdHex: null));
   });
 
+  test('decodeNostrUri ignores the case of the scheme and of the entity', () {
+    const target = (pubkeyHex: hex1, eventIdHex: null);
+    expect(decodeNostrUri(npub1.toUpperCase()), target);
+    expect(decodeNostrUri('NOSTR:${npub1.toUpperCase()}'), target);
+    expect(decodeNostrUri('Nostr:$npub1'), target);
+    // Mixed case is still not bech32.
+    expect(decodeNostrUri('nostr:N${npub1.substring(1)}'), isNull);
+  });
+
   test('decodeNostrUri resolves a bare note to an event target', () {
     final note = noteFromHex(hex1);
     expect(decodeNostrUri(note), (pubkeyHex: null, eventIdHex: hex1));
@@ -118,5 +127,15 @@ void main() {
       isNull,
     );
     expect(decodeNostrUri('not a nostr identifier'), isNull);
+  });
+
+  test('truncateMiddle never splits a surrogate pair', () {
+    bool wellFormed(String s) => s.runes.every((r) => r < 0xD800 || r > 0xDFFF);
+
+    for (var at = 0; at < 30; at++) {
+      final value = '${'a' * at}\u{1F600}${'b' * (30 - at)}';
+      final shown = truncateMiddle(value, totalLength: 16, suffixLength: 4);
+      expect(wellFormed(shown), isTrue, reason: 'emoji at $at: $shown');
+    }
   });
 }

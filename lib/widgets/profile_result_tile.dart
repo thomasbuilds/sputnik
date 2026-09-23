@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../nostr/models/text_sanitizer.dart';
 import '../nostr/nostr.dart';
 import '../screens/profile_screen.dart';
 import '../theme/app_text_styles.dart';
@@ -75,5 +76,5 @@ class ProfileResultTile extends StatelessWidget {
 String _truncateBio(String bio) {
   const maxLength = 80;
   if (bio.length <= maxLength) return bio;
-  return '${bio.substring(0, maxLength).trimRight()}...';
+  return '${safePrefix(bio, maxLength).trimRight()}...';
 }

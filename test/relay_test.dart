@@ -63,6 +63,24 @@ void main() {
     );
   });
 
+  test('canonicalRelayUrl unifies equivalent spellings of one relay', () {
+    for (final (input, canonical) in [
+      ('wss://relay.damus.io:443', 'wss://relay.damus.io'),
+      ('ws://relay.example.com:80/', 'ws://relay.example.com'),
+      ('wss://relay.example.com/path/', 'wss://relay.example.com/path'),
+      ('wss://relay.damus.io/?', 'wss://relay.damus.io'),
+      ('wss://relay.damus.io#frag', 'wss://relay.damus.io'),
+      ('wss://relay.example.com:8443/', 'wss://relay.example.com:8443'),
+      ('wss://filter.example.com/?a=1', 'wss://filter.example.com?a=1'),
+    ]) {
+      expect(canonicalRelayUrl(input), canonical, reason: input);
+    }
+  });
+
+  test('canonicalRelayUrl keeps userinfo, so it is still rejected', () {
+    expect(isRelayUrl(canonicalRelayUrl('wss://a@evil.example.com')), isFalse);
+  });
+
   test('canonicalRelayUrl keeps a non-root path as-is', () {
     expect(
       canonicalRelayUrl('wss://relay.example.com/path'),
@@ -84,6 +102,7 @@ void main() {
       'wss://relay.example.com:8080',
       'ws://192.0.2.1',
       'wss://[2001:db8::1]',
+      'wss://[2001:db8::1]:443/',
     ];
 
     for (final input in inputs) {

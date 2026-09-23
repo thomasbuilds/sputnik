@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sputnik/nostr/http_urls.dart';
 
@@ -30,6 +32,52 @@ void main() {
     test('does not remove a URL that merely starts with a listed one', () {
       const longer = 'https://a.example/1.jpg.html';
       expect(withoutUrls(longer, {url}), longer);
+    });
+  });
+
+  group('trimUrlEnd', () {
+    // The quadratic original, kept as the oracle for the linear version.
+    String reference(String url) {
+      int count(int end, String char) {
+        var n = 0;
+        for (var i = 0; i < end; i++) {
+          if (url[i] == char) n++;
+        }
+        return n;
+      }
+
+      const closers = {')': '(', ']': '[', '}': '{'};
+      var end = url.length;
+      while (end > 0) {
+        final last = url[end - 1];
+        final opener = closers[last];
+        final trailing =
+            '.,;:!?\'*'.contains(last) ||
+            (opener != null && count(end, last) > count(end, opener));
+        if (!trailing) break;
+        end--;
+      }
+      return url.substring(0, end);
+    }
+
+    test('matches the reference on random URLs', () {
+      final random = Random(1);
+      const alphabet = '()[]{}.,;:!?\'*a/';
+      for (var n = 0; n < 20000; n++) {
+        final tail = List.generate(
+          random.nextInt(24),
+          (_) => alphabet[random.nextInt(alphabet.length)],
+        ).join();
+        final url = 'https://a.example/$tail';
+        expect(trimUrlEnd(url), reference(url), reason: url);
+      }
+    });
+
+    test('stays linear on a long run of closing brackets', () {
+      final url = 'https://a.example/${')' * 60000}';
+      final watch = Stopwatch()..start();
+      expect(trimUrlEnd(url), 'https://a.example/');
+      expect(watch.elapsedMilliseconds, lessThan(500));
     });
   });
 }

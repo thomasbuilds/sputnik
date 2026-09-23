@@ -30,11 +30,16 @@ String? _myFollowingLoadedForPubkeyHex;
 /// The load in flight, so concurrent callers share one fetch.
 Future<void>? _myFollowingLoadingFuture;
 
+bool _isFollowTag(List<String> tag) =>
+    tag.length > 1 && tag[0] == 'p' && _pubkeyPattern.hasMatch(tag[1]);
+
+/// The identity [_myFollowingLoadingFuture] is loading for.
+String? _myFollowingLoadingForPubkeyHex;
+
 List<String> _followedPubkeys(NostrEvent event) {
   return [
     for (final tag in event.tags)
-      if (tag.length > 1 && tag[0] == 'p' && _pubkeyPattern.hasMatch(tag[1]))
-        tag[1].toLowerCase(),
+      if (_isFollowTag(tag)) tag[1].toLowerCase(),
   ];
 }
 
@@ -78,8 +83,16 @@ class RelayContactsRepository {
       return result.allRelaysAnswered ? const <String>[] : null;
     }
 
+    final createdAt = own.first.createdAt.millisecondsSinceEpoch ~/ 1000;
+    final known = CacheStore.followingCreatedAt(pubkeyHex);
+    // A lagging relay's older copy must not replace a newer one.
+    if (known != null && createdAt < known) {
+      return CacheStore.getFollowing(pubkeyHex);
+    }
+    // So a later edit never builds on an older copy than this one.
+    _noteContactList(pubkeyHex, own.first.createdAt);
     final following = _followedPubkeys(own.first);
-    await CacheStore.putFollowing(pubkeyHex, following);
+    await CacheStore.putFollowing(pubkeyHex, following, createdAt: createdAt);
     return following;
   }
 
@@ -158,15 +171,34 @@ class RelayContactsRepository {
         myFollowingNotifier.value != null) {
       return Future.value();
     }
-    return _myFollowingLoadingFuture ??=
-        _fetchFollowingOrNull(myPubkeyHex, relayUrls)
-            .then((following) {
-              // Left unloaded on failure so the next call retries.
-              if (following == null) return;
-              myFollowingNotifier.value = following.toSet();
-              _myFollowingLoadedForPubkeyHex = myPubkeyHex;
-            })
-            .whenComplete(() => _myFollowingLoadingFuture = null);
+    if (_myFollowingLoadedForPubkeyHex != null &&
+        _myFollowingLoadedForPubkeyHex != myPubkeyHex) {
+      // Another identity's list must never stand in for this one's.
+      myFollowingNotifier.value = null;
+      _myFollowingLoadedForPubkeyHex = null;
+    }
+    final inFlight = _myFollowingLoadingFuture;
+    if (inFlight != null && _myFollowingLoadingForPubkeyHex == myPubkeyHex) {
+      return inFlight;
+    }
+    _myFollowingLoadingForPubkeyHex = myPubkeyHex;
+    late final Future<void> load;
+    load = _fetchFollowingOrNull(myPubkeyHex, relayUrls)
+        .then((following) {
+          // Left unloaded on failure, or once another identity is active.
+          if (following == null ||
+              activeIdentityPubkeyNotifier.value != myPubkeyHex) {
+            return;
+          }
+          myFollowingNotifier.value = following.toSet();
+          _myFollowingLoadedForPubkeyHex = myPubkeyHex;
+        })
+        .whenComplete(() {
+          if (identical(_myFollowingLoadingFuture, load)) {
+            _myFollowingLoadingFuture = null;
+          }
+        });
+    return _myFollowingLoadingFuture = load;
   }
 
   Future<({List<List<String>> tags, NostrEvent? event})?> _fetchOwnContactList(
@@ -178,6 +210,9 @@ class RelayContactsRepository {
       kind: 3,
       pubkeyHex: pubkeyHex,
       relayUrls: relayUrls,
+      // The republished list replaces the whole thing everywhere, and a
+      // relay that did not answer may hold a newer one.
+      requireAllRelays: true,
     );
     if (!own.conclusive) return null;
 
@@ -191,13 +226,9 @@ class RelayContactsRepository {
     if (known != null && event.createdAt.isBefore(known)) return null;
     _noteContactList(pubkeyHex, event.createdAt);
 
-    return (
-      tags: [
-        for (final tag in event.tags)
-          if (tag.isNotEmpty && tag[0] == 'p') tag,
-      ],
-      event: event,
-    );
+    // Every tag carries over (other clients keep e.g. followed hashtags or
+    // communities here); only well-formed p tags are edited.
+    return (tags: event.tags, event: event);
   }
 
   /// Applies follow (true) / unfollow (false) changes to the relays' list,
@@ -220,7 +251,7 @@ class RelayContactsRepository {
 
     final desired = {
       for (final tag in current.tags)
-        if (tag.length > 1) tag[1].toLowerCase(),
+        if (_isFollowTag(tag)) tag[1].toLowerCase(),
     };
     for (final change in changes.entries) {
       final target = change.key.toLowerCase();
@@ -252,10 +283,14 @@ class RelayContactsRepository {
   }) async {
     final kept = [
       for (final tag in currentTags)
-        if (tag.length > 1 && desiredFollowing.contains(tag[1].toLowerCase()))
+        if (!_isFollowTag(tag) ||
+            desiredFollowing.contains(tag[1].toLowerCase()))
           tag,
     ];
-    final keptPubkeys = {for (final tag in kept) tag[1].toLowerCase()};
+    final keptPubkeys = {
+      for (final tag in kept)
+        if (_isFollowTag(tag)) tag[1].toLowerCase(),
+    };
     final newTags = [
       ...kept,
       for (final pubkey in desiredFollowing)
@@ -277,7 +312,11 @@ class RelayContactsRepository {
     );
     if (accepted) {
       _noteContactList(myPubkeyHex, event.createdAt);
-      await CacheStore.putFollowing(myPubkeyHex, desiredFollowing.toList());
+      await CacheStore.putFollowing(
+        myPubkeyHex,
+        desiredFollowing.toList(),
+        createdAt: event.createdAt.millisecondsSinceEpoch ~/ 1000,
+      );
     }
     return results;
   }

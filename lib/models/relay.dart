@@ -42,9 +42,26 @@ bool isRelayUrl(String input) {
   return _isValidHost(uri.host);
 }
 
-/// Lowercases scheme and host and drops a bare "/" path, for deduplication.
+/// Lowercases scheme and host and drops the default port, trailing slashes,
+/// an empty query and any fragment, so one relay has one spelling.
 String canonicalRelayUrl(String input) {
   final uri = Uri.tryParse(input.trim());
-  if (uri == null) return input.trim();
-  return uri.replace(path: uri.path == '/' ? '' : uri.path).toString();
+  if (uri == null || !uri.hasAuthority) return input.trim();
+  final defaultPort = switch (uri.scheme) {
+    'wss' => 443,
+    'ws' => 80,
+    _ => null,
+  };
+  var path = uri.path;
+  while (path.endsWith('/')) {
+    path = path.substring(0, path.length - 1);
+  }
+  return Uri(
+    scheme: uri.scheme,
+    userInfo: uri.userInfo.isEmpty ? null : uri.userInfo,
+    host: uri.host,
+    port: uri.hasPort && uri.port != defaultPort ? uri.port : null,
+    path: path,
+    query: uri.query.isEmpty ? null : uri.query,
+  ).toString();
 }

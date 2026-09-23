@@ -209,7 +209,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         ...profileCacheNotifier.value,
         pubkeyHex: updated,
       };
-      await CacheStore.putProfiles({pubkeyHex: updated});
+      await CacheStore.putProfiles(
+        {pubkeyHex: updated},
+        createdAt: {
+          pubkeyHex: published.event.createdAt.millisecondsSinceEpoch ~/ 1000,
+        },
+      );
       messenger.showSnackBar(
         SnackBar(
           content: Text(

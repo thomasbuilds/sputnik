@@ -19,6 +19,7 @@ List<Note> applyReactionCounts(
       repostCount: reactions.repostCount,
       likedByMe: me != null && reactions.likerPubkeys.contains(me),
       repostedByMe: me != null && reactions.reposterPubkeys.contains(me),
+      reactionsFor: myPubkeyHex,
     );
   }).toList();
 }

@@ -35,9 +35,8 @@ List<String> blossomServersFromEvent(NostrEvent event) {
 
     final uri = Uri.tryParse(tag[1].trim());
     if (!isFetchableUrl(uri)) continue;
-    final origin = uri!.hasPort
-        ? '${uri.scheme}://${uri.host}:${uri.port}'
-        : '${uri.scheme}://${uri.host}';
+    // Uri.origin keeps the brackets around an IPv6 host.
+    final origin = uri!.origin;
     if (!servers.contains(origin)) servers.add(origin);
     if (servers.length >= maxBlossomServers) break;
   }

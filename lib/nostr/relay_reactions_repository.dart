@@ -104,7 +104,8 @@ class RelayReactionsRepository {
       pubkeyHex: myPubkeyHex,
       kind: 7,
       tags: [
-        ['e', target.id, ''],
+        // NIP-25: the e tag SHOULD carry the target's author as a hint.
+        ['e', target.id, '', target.pubkey],
         ['p', target.pubkey, ''],
         ['k', '${target.kind}'],
       ],
@@ -114,22 +115,24 @@ class RelayReactionsRepository {
   }
 
   /// Publishes a NIP-18 repost (kind 6) of [target], content the reposted
-  /// note's stringified JSON.
+  /// note's stringified JSON -- or empty for a NIP-70 protected note, which
+  /// must not be copied to relays by anyone but its author.
   Future<Map<String, RelayPublishResult>> publishRepost({
     required String seckeyHex,
     required String myPubkeyHex,
     required NostrEvent target,
     required Set<String> relayUrls,
   }) {
+    final protected = target.tags.any((tag) => tag.isNotEmpty && tag[0] == '-');
     final event = signEvent(
       seckeyHex: seckeyHex,
       pubkeyHex: myPubkeyHex,
       kind: 6,
       tags: [
-        ['e', target.id, ''],
+        ['e', target.id, '', target.pubkey],
         ['p', target.pubkey, ''],
       ],
-      content: jsonEncode(target.toJson()),
+      content: protected ? '' : jsonEncode(target.toJson()),
     );
     return client.publish(event, relayUrls);
   }
@@ -137,6 +140,23 @@ class RelayReactionsRepository {
   /// The newest kind [kind] event by [myPubkeyHex] targeting [noteId], if
   /// any -- what [publishRetraction] would delete.
   Future<NostrEvent?> fetchOwnReaction({
+    required String myPubkeyHex,
+    required String noteId,
+    required int kind,
+    required Set<String> relayUrls,
+  }) async {
+    final mine = await fetchOwnReactions(
+      myPubkeyHex: myPubkeyHex,
+      noteId: noteId,
+      kind: kind,
+      relayUrls: relayUrls,
+    );
+    return mine.isEmpty ? null : mine.first;
+  }
+
+  /// Every kind [kind] event by [myPubkeyHex] targeting [noteId], newest
+  /// first: another client (or another screen) may have reacted twice.
+  Future<List<NostrEvent>> fetchOwnReactions({
     required String myPubkeyHex,
     required String noteId,
     required int kind,
@@ -161,7 +181,7 @@ class RelayReactionsRepository {
       return _lastTaggedEventId(event) == wantedNote;
     }).toList()..sort(compareNewestFirst);
 
-    return mine.isEmpty ? null : mine.first;
+    return mine;
   }
 
   /// Publishes a NIP-09 deletion request for [target]; removal is never
@@ -171,14 +191,28 @@ class RelayReactionsRepository {
     required String myPubkeyHex,
     required NostrEvent target,
     required Set<String> relayUrls,
+  }) => publishRetractions(
+    seckeyHex: seckeyHex,
+    myPubkeyHex: myPubkeyHex,
+    targets: [target],
+    relayUrls: relayUrls,
+  );
+
+  /// One NIP-09 deletion request covering every event in [targets].
+  Future<Map<String, RelayPublishResult>> publishRetractions({
+    required String seckeyHex,
+    required String myPubkeyHex,
+    required List<NostrEvent> targets,
+    required Set<String> relayUrls,
   }) {
     final event = signEvent(
       seckeyHex: seckeyHex,
       pubkeyHex: myPubkeyHex,
       kind: 5,
       tags: [
-        ['e', target.id],
-        ['k', '${target.kind}'],
+        for (final target in targets) ['e', target.id],
+        for (final kind in {for (final target in targets) target.kind})
+          ['k', '$kind'],
       ],
       content: '',
     );

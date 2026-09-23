@@ -83,19 +83,13 @@ class _ProfileScreenState extends State<ProfileScreen>
 
   /// Reposts this profile has made, paged separately since they're a
   /// different kind of relay query.
-  late final PostCursor _repostCursor = PostCursor((until) async {
+  late final PostCursor _repostCursor = PostCursor((until) {
     final relayUrls = selectedRelaysNotifier.value;
-    final reposts = await RelayPostRepository(
+    return RelayPostRepository(
       relayUrls: relayUrls,
       client: widget.relayClient,
       limit: _profileEventLimit,
-    ).fetchReposts([_resolvedPubkeyHex!], relayUrls, until: until);
-    final next = reposts.length >= _profileEventLimit
-        ? reposts
-              .map((post) => post.repostedAt!)
-              .reduce((a, b) => a.isBefore(b) ? a : b)
-        : null;
-    return PostPage(reposts, next);
+    ).fetchRepostPage([_resolvedPubkeyHex!], relayUrls, until: until);
   });
   List<String>? _following;
   List<String>? _followers;
@@ -308,9 +302,9 @@ class _ProfileScreenState extends State<ProfileScreen>
               )
               .toList();
           final ownNotesById = <String, Note>{
-            for (final note in (notes ?? const []))
+            for (final note in (notes ?? const <Note>[]))
               if (note.pubkey == pubkeyHex) note.id: note,
-            for (final note in (_fetchedNotes ?? const [])) note.id: note,
+            for (final note in (_fetchedNotes ?? const <Note>[])) note.id: note,
           };
           // Notes fetched before this profile's metadata landed carry stale
           // author data, so re-apply whatever is cached now. A repost entry

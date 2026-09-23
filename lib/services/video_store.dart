@@ -108,7 +108,7 @@ class VideoStore {
         await downloadMedia(
           uri,
           maxBytes: maxVideoBytes,
-          sha256: source.sha256,
+          sha256: source.hashFor(uri),
           timeout: videoTimeout,
           onChunk: sink.add,
           onProgress: onProgress,

@@ -5,6 +5,7 @@ import '../main.dart';
 import '../models/note_mapper.dart';
 import '../nostr/http_urls.dart';
 import '../nostr/models/nostr_metadata.dart';
+import '../nostr/models/text_sanitizer.dart';
 import '../nostr/nip19.dart';
 import '../nostr/relay_client.dart';
 import '../nostr/relay_post_repository.dart';
@@ -28,6 +29,9 @@ const _maxMentionNameLength = 40;
 /// Pubkeys already looked up this session, so a missing profile is not
 /// requested again each time its note scrolls into view.
 final _lookedUp = <String>{};
+
+/// Lets mentions be looked up again, e.g. once the profile cache is cleared.
+void clearMentionLookups() => _lookedUp.clear();
 
 class _Link {
   const _Link(this.start, this.end, this.text, this.httpUrl, this.target);
@@ -169,7 +173,7 @@ class _LinkifiedTextState extends State<LinkifiedText> {
     }
     return name.length <= _maxMentionNameLength
         ? '@$name'
-        : '@${name.substring(0, _maxMentionNameLength - 3)}...';
+        : '@${safePrefix(name, _maxMentionNameLength - 3)}...';
   }
 
   /// A note ID is long and unreadable; keep just enough to tell them apart.

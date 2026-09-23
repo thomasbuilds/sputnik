@@ -760,20 +760,27 @@ void main() {
       });
     });
 
-    testWidgets('refuses an image whose bytes do not match its hash', (
+    testWidgets('refuses a fallback whose bytes do not match the hash', (
       tester,
     ) async {
       await tester.runAsync(() async {
         serve((request) {
-          request.response
-            ..add(_onePixelPng)
-            ..close();
+          if (request.uri.path == '/dead.png') {
+            request.response
+              ..statusCode = HttpStatus.notFound
+              ..close();
+          } else {
+            request.response
+              ..add(_onePixelPng)
+              ..close();
+          }
         });
 
         final provider = BoundedNetworkImage(
           MediaSource(
-            url: base.resolve('/a.png').toString(),
+            url: base.resolve('/dead.png').toString(),
             sha256: 'ab' * 32,
+            fallbackUrls: [base.resolve('/mirror.png').toString()],
           ),
           clientFactory: _realClient,
         );
@@ -824,6 +831,58 @@ void main() {
         final error = await failed.future.timeout(const Duration(seconds: 20));
         expect(error, isA<HttpException>());
       });
+    });
+
+    // NIP-96 hosts (e.g. nostr.build) name a file after the hash of the
+    // upload, then serve a re-encoded copy whose hash differs.
+    testWidgets('takes the author\'s own URL as is, whatever hash it names', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        final original = 'ab' * 32;
+        serve((request) {
+          request.response
+            ..add(_onePixelPng)
+            ..close();
+        });
+
+        final provider = BoundedNetworkImage(
+          MediaSource(
+            url: base.resolve('/$original.png').toString(),
+            sha256: original,
+          ),
+          clientFactory: _realClient,
+        );
+        final loaded = Completer<ImageInfo>();
+        provider
+            .resolve(ImageConfiguration.empty)
+            .addListener(
+              ImageStreamListener(
+                (info, _) => loaded.complete(info),
+                onError: (error, _) => loaded.completeError(error),
+              ),
+            );
+
+        final info = await loaded.future.timeout(const Duration(seconds: 5));
+        expect(info.image.width, 1);
+      });
+    });
+  });
+
+  group('MediaSource.hashFor', () {
+    const source = MediaSource(
+      url: 'https://Host.example/a.png',
+      sha256: 'hash',
+      fallbackUrls: ['https://mirror.example/a.png'],
+    );
+
+    test('holds every source but the author\'s own URL to the hash', () {
+      expect(source.hashFor(Uri.parse('https://host.example/a.png')), isNull);
+      expect(source.hashFor(Uri.parse('https://mirror.example/a.png')), 'hash');
+      expect(
+        source.hashFor(Uri.parse('https://blossom.example/hash.png')),
+        'hash',
+      );
     });
   });
 }

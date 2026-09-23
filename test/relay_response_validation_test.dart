@@ -285,7 +285,7 @@ void main() {
           tags: [
             ['p', other, 'wss://their-relay', 'petname'],
             ['p', victim],
-            ['not-p', 'dropped'],
+            ['not-p', 'kept'],
           ],
         ),
       ]);
@@ -302,6 +302,7 @@ void main() {
       expect(outcome.following, {other, attacker});
       expect(client.lastPublished!.tags, [
         ['p', other, 'wss://their-relay', 'petname'],
+        ['not-p', 'kept'],
         ['p', attacker],
       ]);
     });

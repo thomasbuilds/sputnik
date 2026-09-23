@@ -67,7 +67,7 @@ void main() {
       expect(event.kind, 7);
       expect(event.pubkey, me);
       expect(event.content, '+');
-      expect(event.tags, contains(equals(['e', target.id, ''])));
+      expect(event.tags, contains(equals(['e', target.id, '', target.pubkey])));
       expect(event.tags, contains(equals(['p', target.pubkey, ''])));
       expect(event.tags, contains(equals(['k', '1'])));
     },
@@ -87,12 +87,40 @@ void main() {
       final event = relay.lastPublished!;
       expect(event.kind, 6);
       expect(event.pubkey, me);
-      expect(event.tags, contains(equals(['e', target.id, ''])));
+      expect(event.tags, contains(equals(['e', target.id, '', target.pubkey])));
       expect(event.tags, contains(equals(['p', target.pubkey, ''])));
       expect(
         (jsonDecode(event.content) as Map<String, dynamic>)['id'],
         target.id,
       );
+    },
+  );
+
+  test(
+    'publishRepost leaves a NIP-70 protected note out of the content',
+    () async {
+      final relay = _RecordingRelay();
+      final protected = NostrEvent(
+        id: target.id,
+        pubkey: target.pubkey,
+        createdAt: target.createdAt,
+        kind: 1,
+        tags: const [
+          ['-'],
+        ],
+        content: 'members only',
+        sig: target.sig,
+      );
+      await RelayReactionsRepository(client: relay).publishRepost(
+        seckeyHex: seckeyHex,
+        myPubkeyHex: me,
+        target: protected,
+        relayUrls: {'wss://relay.example'},
+      );
+
+      final event = relay.lastPublished!;
+      expect(event.content, isEmpty);
+      expect(event.tags, contains(equals(['e', target.id, '', target.pubkey])));
     },
   );
 

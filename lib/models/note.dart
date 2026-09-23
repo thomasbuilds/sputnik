@@ -28,6 +28,7 @@ class Note {
     this.isReply = false,
     this.likedByMe = false,
     this.repostedByMe = false,
+    this.reactionsFor,
     this.media = const [],
     this.repostedByPubkey,
     this.repostedByDisplayName,
@@ -53,6 +54,7 @@ class Note {
       isReply: json['isReply'] as bool? ?? false,
       likedByMe: json['likedByMe'] as bool? ?? false,
       repostedByMe: json['repostedByMe'] as bool? ?? false,
+      reactionsFor: json['reactionsFor'] as String?,
       media: _mediaFromJson(json['media']),
       repostedByPubkey: json['repostedByPubkey'] as String?,
       repostedByDisplayName: json['repostedByDisplayName'] as String?,
@@ -79,6 +81,18 @@ class Note {
   /// relays' reaction data.
   final bool likedByMe;
   final bool repostedByMe;
+
+  /// The identity [likedByMe] and [repostedByMe] were worked out for.
+  final String? reactionsFor;
+
+  /// [likedByMe], unless it was worked out for an identity other than
+  /// [pubkeyHex] (e.g. before an identity switch).
+  bool likedBy(String? pubkeyHex) =>
+      likedByMe && (reactionsFor == null || reactionsFor == pubkeyHex);
+
+  /// As [likedBy], for [repostedByMe].
+  bool repostedBy(String? pubkeyHex) =>
+      repostedByMe && (reactionsFor == null || reactionsFor == pubkeyHex);
   final List<NostrMedia> media;
 
   /// Who reposted this note, and when, if this entry is here as a repost
@@ -95,6 +109,7 @@ class Note {
     int? likeCount,
     bool? likedByMe,
     bool? repostedByMe,
+    String? reactionsFor,
   }) {
     return Note(
       id: id,
@@ -111,6 +126,7 @@ class Note {
       isReply: isReply,
       likedByMe: likedByMe ?? this.likedByMe,
       repostedByMe: repostedByMe ?? this.repostedByMe,
+      reactionsFor: reactionsFor ?? this.reactionsFor,
       media: media,
       repostedByPubkey: repostedByPubkey,
       repostedByDisplayName: repostedByDisplayName,
@@ -133,6 +149,7 @@ class Note {
       if (isReply) 'isReply': true,
       if (likedByMe) 'likedByMe': true,
       if (repostedByMe) 'repostedByMe': true,
+      if (reactionsFor != null) 'reactionsFor': reactionsFor,
       if (media.isNotEmpty) 'media': [for (final m in media) m.toJson()],
       if (repostedByPubkey != null) 'repostedByPubkey': repostedByPubkey,
       if (repostedByDisplayName != null)

@@ -76,17 +76,65 @@ void main() {
     expect(client.published, isEmpty);
   });
 
-  test('a majority answering with a list is enough', () async {
+  test('a majority answering with a list is not enough', () async {
+    // The silent relay may be the only one holding the newest list.
     final client = _PartlyAnswering([
       contactList([alice], age: const Duration(days: 30)),
     ], answered: 3);
 
     await follow(client, bob);
 
+    expect(client.published, isEmpty);
+  });
+
+  test('a list loaded for display blocks republishing an older copy', () async {
+    final newer = contactList([alice, bob], age: const Duration(minutes: 5));
+    final client = _PartlyAnswering([newer], answered: 4);
+    await RelayContactsRepository(client: client)
+        .fetchFollowing(me.publicKeyHex, relays, force: true);
+
+    // Later the relays answer with a copy older than the one already seen.
+    client.events
+      ..clear()
+      ..add(contactList([alice], age: const Duration(days: 30)));
+    final results = await follow(client, 'cc' * 32);
+
+    expect(results, isEmpty);
+    expect(client.published, isEmpty);
+  });
+
+  test('tags other than follows carry over untouched', () async {
+    final notAPubkey = ['p', 'npub1notahexkey'];
+    final client = _PartlyAnswering([
+      signEvent(
+        seckeyHex: me.privateKeyHex,
+        pubkeyHex: me.publicKeyHex,
+        kind: 3,
+        tags: [
+          ['p', alice, 'wss://alice.example.com', 'alice'],
+          ['t', 'nostr'],
+          notAPubkey,
+        ],
+        content: '',
+        createdAt: DateTime.now().subtract(const Duration(days: 1)),
+      ),
+    ], answered: 4);
+
+    final outcome = await RelayContactsRepository(client: client)
+        .applyFollowChanges(
+          seckeyHex: me.privateKeyHex,
+          myPubkeyHex: me.publicKeyHex,
+          changes: {bob: true},
+          relayUrls: relays,
+        );
+
     expect(client.published.single.tags, [
-      ['p', alice],
+      ['p', alice, 'wss://alice.example.com', 'alice'],
+      ['t', 'nostr'],
+      notAPubkey,
       ['p', bob],
     ]);
+    expect(outcome.following, {alice, bob});
   });
 
   test('no relay answering never publishes a fresh list', () async {

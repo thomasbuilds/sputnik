@@ -1,9 +1,30 @@
 import 'package:flutter/material.dart';
 
+import '../main.dart';
 import '../models/note.dart';
 import '../nostr/nostr.dart';
 import '../services/reaction_actions.dart';
 import '../theme/app_text_styles.dart';
+
+/// Likes/reposts toggled this session, by "identity:kind:note id", so every
+/// button showing the same note agrees, whichever one was tapped.
+final reactionOverrides = ValueNotifier<Map<String, bool>>(const {});
+
+String? _overrideKey(int kind, Note note) {
+  final me = activeIdentityPubkeyNotifier.value;
+  return me == null ? null : '$me:$kind:${note.id}';
+}
+
+void _setOverride(int kind, Note note, bool value) {
+  final key = _overrideKey(kind, note);
+  if (key == null) return;
+  reactionOverrides.value = {...reactionOverrides.value, key: value};
+}
+
+bool? _override(int kind, Note note) {
+  final key = _overrideKey(kind, note);
+  return key == null ? null : reactionOverrides.value[key];
+}
 
 /// A like button for [note]; toggles a like on tap.
 class LikeButton extends StatefulWidget {
@@ -27,12 +48,28 @@ class LikeButton extends StatefulWidget {
 class _LikeButtonState extends State<LikeButton> {
   bool _pending = false;
 
-  /// Set once this button has toggled a like itself; null defers to
-  /// [Note.likedByMe].
-  bool? _localOverride;
+  bool? get _localOverride => _override(7, widget.note);
+
+  @override
+  void initState() {
+    super.initState();
+    reactionOverrides.addListener(_rebuild);
+    activeIdentityPubkeyNotifier.addListener(_rebuild);
+  }
+
+  @override
+  void dispose() {
+    reactionOverrides.removeListener(_rebuild);
+    activeIdentityPubkeyNotifier.removeListener(_rebuild);
+    super.dispose();
+  }
+
+  void _rebuild() => setState(() {});
 
   Future<void> _tap() async {
-    final liked = _localOverride ?? widget.note.likedByMe;
+    final liked =
+        _localOverride ??
+        widget.note.likedBy(activeIdentityPubkeyNotifier.value);
     setState(() => _pending = true);
     final succeeded = liked
         ? await unlikeNote(
@@ -42,19 +79,21 @@ class _LikeButtonState extends State<LikeButton> {
           )
         : await likeNote(context, widget.note, relayClient: widget.relayClient);
     if (!mounted) return;
-    setState(() {
-      _pending = false;
-      if (succeeded) _localOverride = !liked;
-    });
+    setState(() => _pending = false);
+    if (succeeded) _setOverride(7, widget.note, !liked);
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final liked = _localOverride ?? widget.note.likedByMe;
+    final liked =
+        _localOverride ??
+        widget.note.likedBy(activeIdentityPubkeyNotifier.value);
     final count =
         widget.note.likeCount +
-        (liked == widget.note.likedByMe ? 0 : (liked ? 1 : -1));
+        (liked == widget.note.likedBy(activeIdentityPubkeyNotifier.value)
+            ? 0
+            : (liked ? 1 : -1));
     final color = liked ? theme.colorScheme.primary : theme.colorScheme.outline;
 
     final content = Row(
@@ -105,12 +144,28 @@ class RepostButton extends StatefulWidget {
 class _RepostButtonState extends State<RepostButton> {
   bool _pending = false;
 
-  /// Set once this button has toggled a repost itself; null defers to
-  /// [Note.repostedByMe].
-  bool? _localOverride;
+  bool? get _localOverride => _override(6, widget.note);
+
+  @override
+  void initState() {
+    super.initState();
+    reactionOverrides.addListener(_rebuild);
+    activeIdentityPubkeyNotifier.addListener(_rebuild);
+  }
+
+  @override
+  void dispose() {
+    reactionOverrides.removeListener(_rebuild);
+    activeIdentityPubkeyNotifier.removeListener(_rebuild);
+    super.dispose();
+  }
+
+  void _rebuild() => setState(() {});
 
   Future<void> _tap() async {
-    final reposted = _localOverride ?? widget.note.repostedByMe;
+    final reposted =
+        _localOverride ??
+        widget.note.repostedBy(activeIdentityPubkeyNotifier.value);
     setState(() => _pending = true);
     final succeeded = reposted
         ? await unrepostNote(
@@ -124,19 +179,21 @@ class _RepostButtonState extends State<RepostButton> {
             relayClient: widget.relayClient,
           );
     if (!mounted) return;
-    setState(() {
-      _pending = false;
-      if (succeeded) _localOverride = !reposted;
-    });
+    setState(() => _pending = false);
+    if (succeeded) _setOverride(6, widget.note, !reposted);
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final reposted = _localOverride ?? widget.note.repostedByMe;
+    final reposted =
+        _localOverride ??
+        widget.note.repostedBy(activeIdentityPubkeyNotifier.value);
     final count =
         widget.note.repostCount +
-        (reposted == widget.note.repostedByMe ? 0 : (reposted ? 1 : -1));
+        (reposted == widget.note.repostedBy(activeIdentityPubkeyNotifier.value)
+            ? 0
+            : (reposted ? 1 : -1));
     final color = reposted
         ? theme.colorScheme.primary
         : theme.colorScheme.outline;

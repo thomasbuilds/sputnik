@@ -110,6 +110,9 @@ class _CacheEntry {
 
 final _cache = <String, _CacheEntry>{};
 
+/// Forgets every NIP-05 check.
+void clearNip05Cache() => _cache.clear();
+
 /// Checks that [identifier] maps to [pubkeyHex] via its domain's
 /// `.well-known/nostr.json`. Answers are cached per (pubkey, identifier) pair
 /// for an hour; failures to get one are not.

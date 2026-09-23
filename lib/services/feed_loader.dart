@@ -64,7 +64,14 @@ Future<void> loadGlobalFeed() async {
 }
 
 /// Appends the next older page to [notesNotifier].
-Future<void> loadMoreGlobalFeed() => _appendPosts(_globalCursor, notesNotifier);
+Future<void> loadMoreGlobalFeed() {
+  final generation = _globalGeneration;
+  return _appendPosts(
+    _globalCursor,
+    notesNotifier,
+    () => generation == _globalGeneration,
+  );
+}
 
 /// Posts by the active identity and everyone it follows.
 Future<void> loadFollowingFeed() async {
@@ -93,15 +100,23 @@ Future<void> loadFollowingFeed() async {
 }
 
 /// Appends the next older page to [followingNotesNotifier].
-Future<void> loadMoreFollowingFeed() =>
-    _appendPosts(_followingCursor, followingNotesNotifier);
+Future<void> loadMoreFollowingFeed() {
+  final generation = _followingGeneration;
+  return _appendPosts(
+    _followingCursor,
+    followingNotesNotifier,
+    () => generation == _followingGeneration,
+  );
+}
 
+/// [isCurrent] turns false once a reload (e.g. an identity switch) started.
 Future<void> _appendPosts(
   PostCursor cursor,
   ValueNotifier<List<Note>?> target,
+  bool Function() isCurrent,
 ) async {
   final posts = await cursor.more();
-  if (posts.isEmpty) return;
+  if (posts.isEmpty || !isCurrent()) return;
 
   final relayUrls = selectedRelaysNotifier.value;
   target.value = [
@@ -112,6 +127,7 @@ Future<void> _appendPosts(
   final hydrated = {
     for (final note in await hydratePosts(posts, relayUrls)) note.id: note,
   };
+  if (!isCurrent()) return;
   target.value = [
     for (final note in target.value ?? const <Note>[])
       hydrated[note.id] ?? note,

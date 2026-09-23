@@ -6,25 +6,27 @@ const _urlClosers = {')': '(', ']': '[', '}': '{'};
 
 /// Sentence punctuation and unmatched closers after a URL belong to the text.
 String trimUrlEnd(String url) {
+  // Counted once up front, so a long run of closers stays linear.
+  final counts = <String, int>{};
+  for (var i = 0; i < url.length; i++) {
+    final char = url[i];
+    if (_urlClosers.containsKey(char) || _urlClosers.containsValue(char)) {
+      counts[char] = (counts[char] ?? 0) + 1;
+    }
+  }
+
   var end = url.length;
   while (end > 0) {
     final last = url[end - 1];
     final opener = _urlClosers[last];
-    final trailing =
-        _urlTrailingPunctuation.contains(last) ||
-        (opener != null && _count(url, end, last) > _count(url, end, opener));
-    if (!trailing) break;
+    final unmatched =
+        opener != null && (counts[last] ?? 0) > (counts[opener] ?? 0);
+    if (!_urlTrailingPunctuation.contains(last) && !unmatched) break;
+    // Only closers are counted; openers are never trimmed.
+    if (opener != null) counts[last] = counts[last]! - 1;
     end--;
   }
   return url.substring(0, end);
-}
-
-int _count(String text, int end, String char) {
-  var count = 0;
-  for (var i = 0; i < end; i++) {
-    if (text[i] == char) count++;
-  }
-  return count;
 }
 
 /// [text] without the URLs in [urls], and without any line they empty out.

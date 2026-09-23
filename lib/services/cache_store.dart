@@ -61,16 +61,23 @@ class CacheStore {
     final cutoff = (now ?? DateTime.now())
         .subtract(maxAge)
         .millisecondsSinceEpoch;
+    final latest = (now ?? DateTime.now()).millisecondsSinceEpoch;
     return box.deleteAll([
       for (final key in box.keys)
-        if (((box.get(key)?['fetchedAt'] as int?) ?? 0) < cutoff) key,
+        if (_outside((box.get(key)?['fetchedAt'] as int?) ?? 0, cutoff, latest))
+          key,
     ]);
   }
+
+  /// Too old, or dated in the future (a wrong clock, or a tampered file).
+  static bool _outside(int fetchedAt, int cutoff, int latest) =>
+      fetchedAt < cutoff || fetchedAt > latest;
 
   static bool _isFresh(int? fetchedAtMillis) {
     if (fetchedAtMillis == null) return false;
     final fetchedAt = DateTime.fromMillisecondsSinceEpoch(fetchedAtMillis);
-    return DateTime.now().difference(fetchedAt) < staleAfter;
+    final age = DateTime.now().difference(fetchedAt);
+    return !age.isNegative && age < staleAfter;
   }
 
   static Map<String, NostrMetadata> loadAllProfiles() {
@@ -95,12 +102,25 @@ class CacheStore {
     return _isFresh(_profiles.get(pubkeyHex)?['fetchedAt'] as int?);
   }
 
-  static Future<void> putProfiles(Map<String, NostrMetadata> profiles) async {
+  /// When the cached profile's event was created, in seconds, if known.
+  static int? profileCreatedAt(String pubkeyHex) =>
+      _ready ? (_profiles.get(pubkeyHex)?['createdAt'] as int?) : null;
+
+  /// [createdAt] (seconds) is the event each profile came from, so an older
+  /// copy fetched later never replaces it.
+  static Future<void> putProfiles(
+    Map<String, NostrMetadata> profiles, {
+    Map<String, int> createdAt = const {},
+  }) async {
     if (!_ready) return;
     final now = DateTime.now().millisecondsSinceEpoch;
     await _profiles.putAll({
       for (final entry in profiles.entries)
-        entry.key: {'data': entry.value.toJson(), 'fetchedAt': now},
+        entry.key: {
+          'data': entry.value.toJson(),
+          'fetchedAt': now,
+          'createdAt': ?createdAt[entry.key],
+        },
     });
   }
 
@@ -128,8 +148,16 @@ class CacheStore {
       _ready &&
       _isFresh(_contacts.get('$pubkeyHex:followers')?['fetchedAt'] as int?);
 
-  static Future<void> putFollowing(String pubkeyHex, List<String> pubkeys) =>
-      _putList('$pubkeyHex:following', pubkeys);
+  static Future<void> putFollowing(
+    String pubkeyHex,
+    List<String> pubkeys, {
+    int? createdAt,
+  }) => _putList('$pubkeyHex:following', pubkeys, createdAt: createdAt);
+
+  /// When the cached follow list's event was created, in seconds, if known.
+  static int? followingCreatedAt(String pubkeyHex) => _ready
+      ? (_contacts.get('$pubkeyHex:following')?['createdAt'] as int?)
+      : null;
 
   static Future<void> putFollowers(String pubkeyHex, List<String> pubkeys) =>
       _putList('$pubkeyHex:followers', pubkeys);
@@ -141,11 +169,16 @@ class CacheStore {
     return List<String>.from(entry['pubkeys'] as List? ?? const []);
   }
 
-  static Future<void> _putList(String key, List<String> pubkeys) {
+  static Future<void> _putList(
+    String key,
+    List<String> pubkeys, {
+    int? createdAt,
+  }) {
     if (!_ready) return Future.value();
     return _contacts.put(key, {
       'pubkeys': pubkeys,
       'fetchedAt': DateTime.now().millisecondsSinceEpoch,
+      'createdAt': ?createdAt,
     });
   }
 
@@ -153,10 +186,15 @@ class CacheStore {
     if (!_ready) return null;
     final data = _paymentTargets.get(pubkeyHex)?['data'] as List?;
     if (data == null) return null;
-    return [
-      for (final item in data)
-        NostrPaymentTarget.fromJson(Map<String, dynamic>.from(item as Map)),
-    ];
+    try {
+      return [
+        for (final item in data)
+          NostrPaymentTarget.fromJson(Map<String, dynamic>.from(item as Map)),
+      ];
+    } catch (_) {
+      // Unreadable (e.g. written by another version): a miss, so it refetches.
+      return null;
+    }
   }
 
   static bool isPaymentTargetsFresh(String pubkeyHex) {

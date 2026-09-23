@@ -31,6 +31,23 @@ void main() {
       );
     });
 
+    test('ignores e tags whose value is not an event ID', () {
+      final malformed = _note([
+        ['e', 'note1qqqqqqqqqqqqqqqqqqqq', '', 'root'],
+        ['e', parent, '', 'reply'],
+      ]);
+      expect(replyParentId(malformed), parent);
+      expect(threadRootId(malformed), parent);
+      expect(
+        replyParentId(
+          _note([
+            ['e', 'not-an-id'],
+          ]),
+        ),
+        isNull,
+      );
+    });
+
     test('a lone root marker is a direct reply to the root', () {
       expect(
         replyParentId(
